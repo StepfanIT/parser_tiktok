@@ -1,0 +1,354 @@
+{
+  "clicked": true,
+  "title": "(4)#fyp #viral #tiktokua #it #design #branding #logodesign #startup #webd... | TikTok",
+  "text_snippet": "TikTok\nSearch\nFor You\nExplore\nFollowing\nFriends\nLIVE\nMessages\n\n4\n\nActivity\nUpload\nProfile\nMore\n\nFollowing accounts\n\nLyrics Vids\n\nlyrics_videos0412\n\nХтося\n\nyuraprx\n\nHanter Web\n\nhanter.web\n\nПросто Назар\n\n_na_zik_\n\nMRXXS\n\nmrxxv.dart\n\nView all\nCompany\nProgram\nTerms & Policies\n© 2026 TikTok\n\n3 reposted\n\nmagical_fox_studio\n\n· 2-23\n#fyp #viral #tiktokua #it #design #branding #logodesign#startup #webdevelopment #itstudio #україна #айтіукраїна#magicalfox #magicalfoxstudio\nmore\n\nSee translation\n\n00:08 / 00:20\n\n17\n0\n0\nShare\nComments\nYou may like\nAdd comment...\n\n\nIntroducing keyboard shortcuts!\nGo to previous video\nGo to next video\nLike video\nMute / unmute video\nPlay / Pause\nSkip forward\nSkip backward\nFull screen\n\nPost video\n\nDrag the slider to fit the puzzle\nAudio\n202604141815110F7ECBC8293D201914F5",
+  "inputs": [
+    {
+      "selector": "[data-e2e=\"comment-input\"]",
+      "visible": true,
+      "placeholder": null,
+      "aria_label": null,
+      "role": null,
+      "data_e2e": "comment-input",
+      "tag": "DIV",
+      "class": "comment-panel-input css-xfaik7-7937d88b--DivTextInputContainer e1jg1wm01",
+      "text": "Add comment...\n\n"
+    },
+    {
+      "selector": "div[contenteditable=\"true\"]",
+      "visible": true,
+      "placeholder": null,
+      "aria_label": null,
+      "role": "textbox",
+      "data_e2e": null,
+      "tag": "DIV",
+      "class": "notranslate public-DraftEditor-content",
+      "text": "\n"
+    },
+    {
+      "selector": "[role=\"textbox\"]",
+      "visible": true,
+      "placeholder": null,
+      "aria_label": null,
+      "role": "textbox",
+      "data_e2e": null,
+      "tag": "DIV",
+      "class": "notranslate public-DraftEditor-content",
+      "text": "\n"
+    },
+    {
+      "selector": "input",
+      "visible": false,
+      "placeholder": "Search",
+      "aria_label": "Search",
+      "role": "combobox",
+      "data_e2e": "search-user-input",
+      "tag": "INPUT",
+      "class": "css-cnn5nr-7937d88b--InputElement e1vdpl643",
+      "text": ""
+    }
+  ],
+  "buttons": [
+    {
+      "visible": false,
+      "text": "",
+      "aria_label": "Search",
+      "data_e2e": "search-box-button",
+      "disabled": false
+    },
+    {
+      "visible": false,
+      "text": "All activity",
+      "aria_label": null,
+      "data_e2e": "all",
+      "disabled": false
+    },
+    {
+      "visible": false,
+      "text": "Likes",
+      "aria_label": null,
+      "data_e2e": "likes",
+      "disabled": false
+    },
+    {
+      "visible": false,
+      "text": "Comments",
+      "aria_label": null,
+      "data_e2e": "comments",
+      "disabled": false
+    },
+    {
+      "visible": false,
+      "text": "Mentions and tags",
+      "aria_label": null,
+      "data_e2e": "mentions",
+      "disabled": false
+    },
+    {
+      "visible": false,
+      "text": "Followers",
+      "aria_label": null,
+      "data_e2e": "followers",
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Search",
+      "aria_label": "Search",
+      "data_e2e": "nav-search",
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "For You",
+      "aria_label": "For You",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Explore",
+      "aria_label": "Explore",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Following",
+      "aria_label": "Following",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Friends",
+      "aria_label": "Friends",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "LIVE",
+      "aria_label": "LIVE",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Messages",
+      "aria_label": "Messages",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "4\n\nActivity",
+      "aria_label": "Activity",
+      "data_e2e": "nav-activity",
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Upload",
+      "aria_label": "Upload",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Profile",
+      "aria_label": "Profile",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "More",
+      "aria_label": "More",
+      "data_e2e": "nav-more-menu",
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Lyrics Vids\n\nlyrics_videos0412",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Хтося\n\nyuraprx",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Hanter Web\n\nhanter.web",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Просто Назар\n\n_na_zik_",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "MRXXS\n\nmrxxv.dart",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "View all",
+      "aria_label": null,
+      "data_e2e": "following-see-all",
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": "Volume",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": "more-menu-icon",
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "more",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "17",
+      "aria_label": "Like video\n17 likes",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "0",
+      "aria_label": "Read or add comments\n0 comments",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "0",
+      "aria_label": "Add to Favorites. 0 added to Favorites",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Share",
+      "aria_label": "Share video\n0 shares",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "Comments",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "You may like",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": "“@” a user to tag them in your comments",
+      "data_e2e": "comment-at-icon",
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": "Click to add emojis",
+      "data_e2e": "comment-emoji-icon",
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": "Post",
+      "data_e2e": "comment-post",
+      "disabled": true
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": "top-right-action-bar-get-coin",
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": "Close",
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": true
+    },
+    {
+      "visible": true,
+      "text": "Audio",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false
+    }
+  ]
+}

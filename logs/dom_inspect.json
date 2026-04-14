@@ -1,0 +1,503 @@
+{
+  "page_url": "https://www.tiktok.com/@magical_fox_studio/video/7610181303157263634?is_from_webapp=1&web_id=7588228926067230219",
+  "title": "(4)#fyp #viral #tiktokua #it #design #branding #logodesign #startup #webd... | TikTok",
+  "text_snippet": "TikTok\nSearch\nFor You\nExplore\nFollowing\nFriends\nLIVE\nMessages\n\n4\n\nActivity\nUpload\nProfile\nMore\n\nFollowing accounts\n\nLyrics Vids\n\nlyrics_videos0412\n\nХтося\n\nyuraprx\n\nHanter Web\n\nhanter.web\n\nПросто Назар\n\n_na_zik_\n\nMRXXS\n\nmrxxv.dart\n\nView all\nCompany\nProgram\nTerms & Policies\n© 2026 TikTok\n\n3 reposted\n\nmagical_fox_studio\n\n· 2-23\n#fyp #viral #tiktokua #it #design #branding #logodesign#startup #webdevelopment #itstudio #україна #айтіукраїна#magicalfox #magicalfoxstudio\nmore\n\nSee translation\n\n00:05 / 00:20\n\n17\n0\n0\nShare\nComments\nYou may like\nIntroducing keyboard shortcuts!\nGo to previous video\nGo to next video\nLike video\nMute / unmute video\nPlay / Pause\nSkip forward\nSkip backward\nFull screen\n\nPost video\n\nUnmute",
+  "comment_input_candidates": [
+    {
+      "selector": "input",
+      "visible": false,
+      "text": "",
+      "value": "",
+      "placeholder": "Search",
+      "aria_label": "Search",
+      "role": "combobox",
+      "data_e2e": "search-user-input",
+      "tag": "INPUT",
+      "class": "css-cnn5nr-7937d88b--InputElement e1vdpl643"
+    }
+  ],
+  "buttons": [
+    {
+      "visible": false,
+      "text": "",
+      "aria_label": "Search",
+      "data_e2e": "search-box-button",
+      "disabled": false,
+      "class": "css-1gbgfj-7937d88b--ButtonSearch e1vdpl647"
+    },
+    {
+      "visible": false,
+      "text": "All activity",
+      "aria_label": null,
+      "data_e2e": "all",
+      "disabled": false,
+      "class": "css-1ah226i-7937d88b--ButtonGroupItem e1eot1fg9"
+    },
+    {
+      "visible": false,
+      "text": "Likes",
+      "aria_label": null,
+      "data_e2e": "likes",
+      "disabled": false,
+      "class": "css-k8enzp-7937d88b--ButtonGroupItem e1eot1fg9"
+    },
+    {
+      "visible": false,
+      "text": "Comments",
+      "aria_label": null,
+      "data_e2e": "comments",
+      "disabled": false,
+      "class": "css-k8enzp-7937d88b--ButtonGroupItem e1eot1fg9"
+    },
+    {
+      "visible": false,
+      "text": "Mentions and tags",
+      "aria_label": null,
+      "data_e2e": "mentions",
+      "disabled": false,
+      "class": "css-k8enzp-7937d88b--ButtonGroupItem e1eot1fg9"
+    },
+    {
+      "visible": false,
+      "text": "Followers",
+      "aria_label": null,
+      "data_e2e": "followers",
+      "disabled": false,
+      "class": "css-k8enzp-7937d88b--ButtonGroupItem e1eot1fg9"
+    },
+    {
+      "visible": true,
+      "text": "Search",
+      "aria_label": "Search",
+      "data_e2e": "nav-search",
+      "disabled": false,
+      "class": "TUXButton TUXButton--capsule TUXButton--medium TUXButton--secondary css-1icacu2-7937d88b--StyledTUXSearchButton e1vp56d86"
+    },
+    {
+      "visible": true,
+      "text": "For You",
+      "aria_label": "For You",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1t1gyuu-7937d88b--StyledTUXNavButton e1vp56d80"
+    },
+    {
+      "visible": true,
+      "text": "Explore",
+      "aria_label": "Explore",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1t1gyuu-7937d88b--StyledTUXNavButton e1vp56d80"
+    },
+    {
+      "visible": true,
+      "text": "Following",
+      "aria_label": "Following",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1t1gyuu-7937d88b--StyledTUXNavButton e1vp56d80"
+    },
+    {
+      "visible": true,
+      "text": "Friends",
+      "aria_label": "Friends",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1t1gyuu-7937d88b--StyledTUXNavButton e1vp56d80"
+    },
+    {
+      "visible": true,
+      "text": "LIVE",
+      "aria_label": "LIVE",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1t1gyuu-7937d88b--StyledTUXNavButton e1vp56d80"
+    },
+    {
+      "visible": true,
+      "text": "Messages",
+      "aria_label": "Messages",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1t1gyuu-7937d88b--StyledTUXNavButton e1vp56d80"
+    },
+    {
+      "visible": true,
+      "text": "4\n\nActivity",
+      "aria_label": "Activity",
+      "data_e2e": "nav-activity",
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1t1gyuu-7937d88b--StyledTUXNavButton e1vp56d80"
+    },
+    {
+      "visible": true,
+      "text": "Upload",
+      "aria_label": "Upload",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1nw7xzd-7937d88b--StyledTUXNavButton e1vp56d80"
+    },
+    {
+      "visible": true,
+      "text": "Profile",
+      "aria_label": "Profile",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1t1gyuu-7937d88b--StyledTUXNavButton e1vp56d80"
+    },
+    {
+      "visible": true,
+      "text": "More",
+      "aria_label": "More",
+      "data_e2e": "nav-more-menu",
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1t1gyuu-7937d88b--StyledTUXNavButton e1vp56d80"
+    },
+    {
+      "visible": true,
+      "text": "Lyrics Vids\n\nlyrics_videos0412",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1gp0esw-7937d88b--StyledTUXFollowingAccountButton eo3ng8g0"
+    },
+    {
+      "visible": true,
+      "text": "Хтося\n\nyuraprx",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1gp0esw-7937d88b--StyledTUXFollowingAccountButton eo3ng8g0"
+    },
+    {
+      "visible": true,
+      "text": "Hanter Web\n\nhanter.web",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1gp0esw-7937d88b--StyledTUXFollowingAccountButton eo3ng8g0"
+    },
+    {
+      "visible": true,
+      "text": "Просто Назар\n\n_na_zik_",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1gp0esw-7937d88b--StyledTUXFollowingAccountButton eo3ng8g0"
+    },
+    {
+      "visible": true,
+      "text": "MRXXS\n\nmrxxv.dart",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1gp0esw-7937d88b--StyledTUXFollowingAccountButton eo3ng8g0"
+    },
+    {
+      "visible": true,
+      "text": "View all",
+      "aria_label": null,
+      "data_e2e": "following-see-all",
+      "disabled": false,
+      "class": "TUXButton TUXButton--default TUXButton--medium TUXButton--secondary css-1dzyg8j-7937d88b--StyledTUXShowMoreButton e5akhhj0"
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": "Volume",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--capsule TUXButton--medium TUXButton--secondary action-item css-1m247l7"
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": "more-menu-icon",
+      "disabled": false,
+      "class": "TUXButton TUXButton--capsule TUXButton--medium TUXButton--secondary eco3q8z0 action-item css-aaaijz-7937d88b--StyledMoreMenuActionItem"
+    },
+    {
+      "visible": true,
+      "text": "more",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false,
+      "class": "css-1v8o1b4-7937d88b--ButtonExpand-7937d88b--StyledButtonBottom e1fmr01i3"
+    },
+    {
+      "visible": true,
+      "text": "17",
+      "aria_label": "Like video\n17 likes",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "css-1pte5k5-7937d88b--ButtonActionItem efpxn6t0"
+    },
+    {
+      "visible": true,
+      "text": "0",
+      "aria_label": "Read or add comments\n0 comments",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "css-1pte5k5-7937d88b--ButtonActionItem efpxn6t0"
+    },
+    {
+      "visible": true,
+      "text": "0",
+      "aria_label": "Add to Favorites. 0 added to Favorites",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "css-1pte5k5-7937d88b--ButtonActionItem efpxn6t0"
+    },
+    {
+      "visible": true,
+      "text": "Share",
+      "aria_label": "Share video\n0 shares",
+      "data_e2e": null,
+      "disabled": false,
+      "class": "css-1pte5k5-7937d88b--ButtonActionItem efpxn6t0"
+    },
+    {
+      "visible": true,
+      "text": "Comments",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false,
+      "class": "tux-button__element-ZBq38f"
+    },
+    {
+      "visible": true,
+      "text": "You may like",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false,
+      "class": "tux-button__element-ZBq38f"
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": "top-right-action-bar-get-coin",
+      "disabled": false,
+      "class": "css-50aty2-7937d88b--StyledActionBarButton egvv9qt3"
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false,
+      "class": "css-50aty2-7937d88b--StyledActionBarButton egvv9qt3"
+    },
+    {
+      "visible": true,
+      "text": "",
+      "aria_label": null,
+      "data_e2e": null,
+      "disabled": false,
+      "class": "TUXButton TUXButton--capsule TUXButton--medium TUXButton--secondary"
+    }
+  ],
+  "links": [
+    {
+      "text": "TikTok",
+      "href": "/",
+      "visible": false
+    },
+    {
+      "text": "Upload",
+      "href": "/tiktokstudio/upload?from=upload",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@hatesck",
+      "visible": false
+    },
+    {
+      "text": "L1wb",
+      "href": "/@hatesck",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7610181303157263634",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@taki_ua_",
+      "visible": false
+    },
+    {
+      "text": "Тарас",
+      "href": "/@taki_ua_",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7609285970550082824",
+      "visible": false
+    },
+    {
+      "text": "Hanter Webreposted your video. 3-21",
+      "href": "/@7588228845859652664/video/7604233614871612692",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "Hanter Web",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7604233614871612692",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "Hanter Web",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7604233614871612692",
+      "visible": false
+    },
+    {
+      "text": "Hanter Webreposted your video. 3-21",
+      "href": "/@7588228845859652664/video/7605664807332728071",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "Hanter Web",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7605664807332728071",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "Hanter Web",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7605664807332728071",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "Hanter Web",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7605724436569804039",
+      "visible": false
+    },
+    {
+      "text": "Hanter Webreposted your video. 3-21",
+      "href": "/@7588228845859652664/video/7605724436569804039",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "Hanter Web",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7605724436569804039",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "Hanter Web",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7606423590455479570",
+      "visible": false
+    },
+    {
+      "text": "Hanter Webreposted your video. 3-21",
+      "href": "/@7588228845859652664/video/7606423590455479570",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "Hanter Web",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7606423590455479570",
+      "visible": false
+    },
+    {
+      "text": "Hanter Webreposted your video. 3-21",
+      "href": "/@7588228845859652664/video/7607595249468296456",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "Hanter Web",
+      "href": "/@hanter.web",
+      "visible": false
+    },
+    {
+      "text": "",
+      "href": "/@7588228845859652664/video/7607595249468296456",
+      "visible": false
+    }
+  ]
+}
