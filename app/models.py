@@ -9,6 +9,7 @@ from typing import Any
 class TikTokAccountConfig:
     name: str
     storage_state_path: Path
+    user_data_dir: Path
     browser_type: str = "chromium"
     browser_channel: str | None = None
     headless: bool = False
@@ -18,14 +19,21 @@ class TikTokAccountConfig:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any], project_root: Path) -> "TikTokAccountConfig":
+        name = str(payload.get("name", "main"))
         storage_state_raw = payload.get("storage_state_path", "data/accounts/main_storage_state.json")
         storage_state_path = Path(storage_state_raw)
         if not storage_state_path.is_absolute():
             storage_state_path = project_root / storage_state_path
 
+        user_data_raw = payload.get("user_data_dir", f"data/accounts/{name}_user_data")
+        user_data_dir = Path(user_data_raw)
+        if not user_data_dir.is_absolute():
+            user_data_dir = project_root / user_data_dir
+
         return cls(
-            name=str(payload.get("name", "main")),
+            name=name,
             storage_state_path=storage_state_path,
+            user_data_dir=user_data_dir,
             browser_type=str(payload.get("browser_type", "chromium")),
             browser_channel=payload.get("browser_channel"),
             headless=bool(payload.get("headless", False)),
@@ -58,4 +66,3 @@ class SendResult:
     outgoing_comment: OutgoingComment
     success: bool
     details: str
-

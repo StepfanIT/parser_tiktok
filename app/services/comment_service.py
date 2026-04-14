@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 from app.config import AppConfig
-from app.integrations.tiktok_client import TikTokPlaywrightClient
+from app.integrations.tiktok_client import TikTokClientError, TikTokPlaywrightClient
 from app.models import SendResult
 from app.repositories.account_repository import AccountRepository
 from app.repositories.csv_repository import CSVRepository
@@ -33,6 +33,12 @@ class TikTokCommentService:
         account = self._account_repository.load_account(account_path)
         client = TikTokPlaywrightClient(self._config, self._logger, account)
         comments = client.scrape_comments(video_url)
+        if not comments:
+            raise TikTokClientError(
+                "Не вдалося зібрати жодного коментаря. "
+                "Перевірте, чи відкрилась comments panel, чи немає CAPTCHA, "
+                "і чи у відео справді є коментарі."
+            )
         return self._csv_repository.export_scraped_comments(comments, output_path)
 
     def send_comments(
@@ -45,4 +51,3 @@ class TikTokCommentService:
         outgoing_comments = self._csv_repository.load_outgoing_comments(csv_path)
         client = TikTokPlaywrightClient(self._config, self._logger, account)
         return client.send_comments(outgoing_comments)
-

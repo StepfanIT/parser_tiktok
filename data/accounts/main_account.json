@@ -1,6 +1,7 @@
 {
   "name": "main",
   "storage_state_path": "data/accounts/main_storage_state.json",
+  "user_data_dir": "data/accounts/main_user_data",
   "browser_type": "chromium",
   "browser_channel": null,
   "headless": false,
@@ -8,4 +9,3 @@
   "login_url": "https://www.tiktok.com/login",
   "bootstrap_login_if_missing": true
 }
-

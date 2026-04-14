@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
-from playwright.sync_api import Browser, BrowserContext, Error, Locator, Page, TimeoutError, sync_playwright
+from playwright.sync_api import BrowserContext, Error, Locator, Page, TimeoutError, sync_playwright
 
 from app.config import AppConfig
 from app.models import OutgoingComment, ScrapedComment, SendResult, TikTokAccountConfig
@@ -39,9 +40,8 @@ class TikTokPlaywrightClient:
     def scrape_comments(self, video_url: str) -> list[ScrapedComment]:
         self._logger.info("Starting comment scrape for %s", video_url)
         with sync_playwright() as playwright:
-            browser = self._launch_browser(playwright)
-            context = self._create_context(browser, use_saved_state=True)
-            page = context.new_page()
+            context = self._open_context(playwright)
+            page = self._create_working_page(context)
             collected: dict[str, ScrapedComment] = {}
 
             def handle_response(response: Any) -> None:
@@ -49,9 +49,9 @@ class TikTokPlaywrightClient:
 
             page.on("response", handle_response)
             try:
-                self._open_video_page(page, video_url)
-                self._dismiss_overlays(page)
-                self._scroll_for_comments(page)
+                page = self._open_video_page(page, video_url, require_login=False)
+                page = self._scroll_for_comments(page)
+                self._wait_for_comment_content(page)
 
                 if not collected:
                     self._logger.info("Network capture returned no comments, falling back to DOM parsing.")
@@ -62,8 +62,8 @@ class TikTokPlaywrightClient:
                 self._logger.info("Collected %s comments for %s", len(comments), video_url)
                 return comments
             finally:
+                self._persist_storage_state(context)
                 context.close()
-                browser.close()
 
     def send_comments(self, comments: Iterable[OutgoingComment]) -> list[SendResult]:
         comment_batch = list(comments)
@@ -72,13 +72,8 @@ class TikTokPlaywrightClient:
 
         self._logger.info("Starting comment posting for %s comments.", len(comment_batch))
         with sync_playwright() as playwright:
-            browser = self._launch_browser(playwright)
-            context = self._create_context(
-                browser,
-                use_saved_state=True,
-                require_login=True,
-            )
-            page = context.new_page()
+            context = self._open_context(playwright)
+            page = self._create_working_page(context)
             current_video_url: str | None = None
             results: list[SendResult] = []
 
@@ -93,25 +88,27 @@ class TikTokPlaywrightClient:
                         time.sleep(item.delay_seconds)
 
                     if current_video_url != item.video_url:
-                        self._open_video_page(page, item.video_url)
-                        self._dismiss_overlays(page)
-                        self._prepare_comment_panel(page)
+                        page = self._open_video_page(page, item.video_url, require_login=True)
+                        page = self._prepare_comment_panel(page, video_url=item.video_url, require_input=True)
                         current_video_url = item.video_url
 
-                    results.append(self._send_single_comment(page, item))
+                    page, result = self._send_single_comment(page, item)
+                    results.append(result)
 
-                context.storage_state(path=str(self._account.storage_state_path))
                 return results
             finally:
+                self._persist_storage_state(context)
                 context.close()
-                browser.close()
 
-    def _launch_browser(self, playwright: Any) -> Browser:
+    def _open_context(self, playwright: Any) -> BrowserContext:
         browser_type = getattr(playwright, self._account.browser_type, None)
         if browser_type is None:
             raise TikTokClientError(
                 f"Unsupported browser_type '{self._account.browser_type}' in account config."
             )
+
+        profile_exists = self._account.user_data_dir.exists() and any(self._account.user_data_dir.iterdir())
+        self._account.user_data_dir.mkdir(parents=True, exist_ok=True)
 
         launch_kwargs: dict[str, Any] = {
             "headless": self._account.headless,
@@ -121,50 +118,262 @@ class TikTokPlaywrightClient:
         if self._account.browser_channel:
             launch_kwargs["channel"] = self._account.browser_channel
 
-        self._logger.info("Launching %s browser.", self._account.browser_type)
-        return browser_type.launch(**launch_kwargs)
-
-    def _create_context(
-        self,
-        browser: Browser,
-        *,
-        use_saved_state: bool,
-        require_login: bool = False,
-    ) -> BrowserContext:
-        context_kwargs: dict[str, Any] = {}
-        if use_saved_state and self._account.storage_state_path.exists():
-            context_kwargs["storage_state"] = str(self._account.storage_state_path)
-            self._logger.info("Loading saved storage state from %s", self._account.storage_state_path)
-
-        context = browser.new_context(**context_kwargs)
+        self._logger.info(
+            "Launching %s browser with persistent profile %s.",
+            self._account.browser_type,
+            self._account.user_data_dir,
+        )
+        context = browser_type.launch_persistent_context(
+            user_data_dir=str(self._account.user_data_dir),
+            **launch_kwargs,
+        )
         context.set_default_timeout(self._config.browser_action_timeout_ms)
         context.set_default_navigation_timeout(self._config.navigation_timeout_ms)
 
-        if require_login and not self._account.storage_state_path.exists():
-            if not self._account.bootstrap_login_if_missing:
-                raise TikTokLoginRequiredError(
-                    "Login session not found and bootstrap_login_if_missing is disabled."
-                )
-            self._bootstrap_login(context)
+        if self._account.storage_state_path.exists():
+            self._restore_storage_state_backup(context)
 
         return context
 
-    def _bootstrap_login(self, context: BrowserContext) -> None:
-        self._logger.info("No storage state found. Opening manual login flow.")
-        page = context.new_page()
-        page.goto(self._account.login_url, wait_until="domcontentloaded")
-        print()
-        print("Сесію TikTok ще не збережено.")
-        print("Відкрито браузер. Увійдіть у TikTok вручну в цьому вікні.")
-        input("Після успішного входу натисніть Enter тут, щоб зберегти сесію... ")
-        self._account.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
-        context.storage_state(path=str(self._account.storage_state_path))
-        self._logger.info("Storage state saved to %s", self._account.storage_state_path)
+    def _create_working_page(self, context: BrowserContext) -> Page:
+        return context.new_page()
 
-    def _open_video_page(self, page: Page, video_url: str) -> None:
+    def _restore_storage_state_backup(self, context: BrowserContext) -> None:
+        self._logger.info("Restoring storage state backup from %s", self._account.storage_state_path)
+        try:
+            payload = json.loads(self._account.storage_state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            self._logger.warning("Unable to load storage state backup: %s", error)
+            return
+
+        cookies = payload.get("cookies") or []
+        if cookies:
+            try:
+                context.add_cookies(cookies)
+            except Error as error:
+                self._logger.warning("Unable to restore TikTok cookies from storage backup: %s", error)
+
+        origins = payload.get("origins") or []
+        if not origins:
+            return
+
+        page = self._create_working_page(context)
+        try:
+            for origin_payload in origins:
+                origin_url = str(origin_payload.get("origin") or "").strip()
+                local_storage = origin_payload.get("localStorage") or []
+                if not origin_url or not local_storage:
+                    continue
+
+                try:
+                    page = self._goto_with_retry(page, origin_url, wait_until="commit")
+                    page.evaluate(
+                        """
+                        (items) => {
+                          for (const item of items) {
+                            if (item?.name) {
+                              localStorage.setItem(item.name, item.value ?? "");
+                            }
+                          }
+                        }
+                        """,
+                        local_storage,
+                    )
+                except (TimeoutError, Error) as error:
+                    self._logger.warning("Unable to restore local storage for %s: %s", origin_url, error)
+        finally:
+            try:
+                if not page.is_closed():
+                    page.close()
+            except Error:
+                pass
+
+    def _persist_storage_state(self, context: BrowserContext) -> None:
+        try:
+            self._account.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
+            context.storage_state(path=str(self._account.storage_state_path))
+        except (OSError, Error) as error:
+            self._logger.warning("Unable to save storage state backup: %s", error)
+
+    def _open_video_page(self, page: Page, video_url: str, *, require_login: bool) -> Page:
         self._logger.info("Opening video page %s", video_url)
-        page.goto(video_url, wait_until="domcontentloaded")
+        try:
+            page = self._goto_with_retry(page, video_url, wait_until="domcontentloaded")
+        except (TimeoutError, Error) as error:
+            raise TikTokClientError(f"Unable to open TikTok video page: {error}") from error
+
         page.wait_for_timeout(3_000)
+        self._wait_for_video_surface(page)
+        self._dismiss_overlays(page)
+        if require_login:
+            page = self._ensure_logged_in(page, return_url=video_url)
+            self._wait_for_video_surface(page)
+            self._dismiss_overlays(page)
+        self._wait_for_verification_if_needed(page)
+        return page
+
+    def _ensure_logged_in(self, page: Page, *, return_url: str | None = None) -> Page:
+        if not self._is_login_required(page):
+            return page
+
+        if self._account.headless:
+            raise TikTokLoginRequiredError(
+                "TikTok requires login, but the browser runs headless. "
+                "Disable headless mode and log in manually once."
+            )
+
+        if not self._account.bootstrap_login_if_missing:
+            raise TikTokLoginRequiredError(
+                "TikTok session is not active. Enable bootstrap_login_if_missing or refresh the profile."
+            )
+
+        self._logger.info("TikTok session is not active. Opening manual login flow.")
+        try:
+            page = self._goto_with_retry(page, self._account.login_url, wait_until="domcontentloaded")
+        except (TimeoutError, Error) as error:
+            raise TikTokClientError(f"Unable to open TikTok login page: {error}") from error
+        print()
+        print("Сесія TikTok неактивна або протухла.")
+        print("Увійдіть у TikTok вручну в уже відкритому профілі браузера.")
+        input("Після успішного входу натисніть Enter тут, щоб продовжити... ")
+
+        page.wait_for_timeout(1_500)
+        self._dismiss_overlays(page)
+        self._wait_for_verification_if_needed(page)
+        if self._is_login_required(page):
+            raise TikTokLoginRequiredError(
+                "TikTok login is still required after manual authentication."
+            )
+
+        self._persist_storage_state(page.context)
+        if return_url:
+            try:
+                page = self._goto_with_retry(page, return_url, wait_until="domcontentloaded")
+            except (TimeoutError, Error) as error:
+                raise TikTokClientError(
+                    f"Unable to return to the TikTok video page after login: {error}"
+                ) from error
+            page.wait_for_timeout(3_000)
+        return page
+
+    def _goto_with_retry(self, page: Page, url: str, *, wait_until: str) -> Page:
+        wait_strategies = [wait_until, "commit", "commit"]
+        last_error: Error | TimeoutError | None = None
+
+        for attempt, wait_strategy in enumerate(wait_strategies, start=1):
+            try:
+                page.goto(url, wait_until=wait_strategy)
+                return page
+            except TimeoutError as error:
+                last_error = error
+                if attempt == len(wait_strategies):
+                    raise
+                self._logger.warning(
+                    "Timed out opening %s on attempt %s/%s with wait_until=%s. Retrying.",
+                    url,
+                    attempt,
+                    len(wait_strategies),
+                    wait_strategy,
+                )
+            except Error as error:
+                if not self._is_navigation_aborted(error):
+                    raise
+
+                if self._urls_match(page.url, url):
+                    self._logger.warning(
+                        "Navigation to %s was aborted on attempt %s, but the page already reached %s.",
+                        url,
+                        attempt,
+                        page.url,
+                    )
+                    return page
+
+                last_error = error
+                if attempt == len(wait_strategies):
+                    raise
+                self._logger.warning(
+                    "Navigation to %s was aborted on attempt %s/%s with wait_until=%s. Retrying on a fresh page.",
+                    url,
+                    attempt,
+                    len(wait_strategies),
+                    wait_strategy,
+                )
+
+            page.wait_for_timeout(1_000)
+            page = self._replace_page(page)
+
+        if last_error is not None:
+            raise last_error
+        return page
+
+    def _replace_page(self, page: Page) -> Page:
+        context = page.context
+        try:
+            if not page.is_closed():
+                page.close()
+        except Error:
+            pass
+        return self._create_working_page(context)
+
+    @staticmethod
+    def _is_navigation_aborted(error: Error) -> bool:
+        return "net::ERR_ABORTED" in str(error)
+
+    @staticmethod
+    def _urls_match(current_url: str, target_url: str) -> bool:
+        def normalize(url: str) -> str:
+            return url.split("#", 1)[0].split("?", 1)[0].rstrip("/")
+
+        current = normalize(current_url or "")
+        target = normalize(target_url or "")
+        return bool(current) and current == target
+
+    def _is_login_required(self, page: Page) -> bool:
+        if "login" in page.url.lower():
+            return True
+
+        selectors = [
+            '[data-e2e="top-login-button"]',
+            'button:has-text("Log in")',
+            'button:has-text("Log in to TikTok")',
+            'a[href*="/login"]',
+            'text="Log in to TikTok"',
+            'text="Continue with phone/email/username"',
+            'text="Log in for a better experience"',
+        ]
+        for selector in selectors:
+            locator = page.locator(selector).first
+            try:
+                if locator.is_visible(timeout=500):
+                    return True
+            except (TimeoutError, Error):
+                continue
+
+        try:
+            login_button = page.get_by_role("button", name=re.compile("log in", re.I)).first
+            if login_button.is_visible(timeout=500):
+                return True
+        except (TimeoutError, Error):
+            pass
+        return False
+
+    def _wait_for_video_surface(self, page: Page, timeout_ms: int = 12_000) -> None:
+        deadline = time.monotonic() + (timeout_ms / 1_000)
+        while time.monotonic() < deadline:
+            if self._find_comment_input(page) is not None or self._find_comment_trigger(page) is not None:
+                return
+
+            if self._is_login_required(page) or self._has_verification_challenge(page):
+                return
+
+            try:
+                video = page.locator("video").first
+                if video.is_visible(timeout=300):
+                    return
+            except (TimeoutError, Error):
+                pass
+
+            page.wait_for_timeout(500)
 
     def _dismiss_overlays(self, page: Page) -> None:
         selectors = [
@@ -184,53 +393,255 @@ class TikTokPlaywrightClient:
             except (TimeoutError, Error):
                 continue
 
-    def _prepare_comment_panel(self, page: Page) -> None:
+    def _prepare_comment_panel(
+        self,
+        page: Page,
+        *,
+        video_url: str | None = None,
+        require_input: bool,
+    ) -> Page:
         self._close_shortcuts_modal(page)
         self._wait_for_verification_if_needed(page)
+        if require_input:
+            page = self._ensure_logged_in(page, return_url=video_url)
 
-        if self._find_comment_input(page) is not None:
-            return
+        for _attempt in range(2):
+            if self._comment_surface_ready(page, require_input=require_input):
+                return page
 
-        self._logger.info("Comment input is hidden. Opening comments panel.")
-        self._open_comments_panel(page)
-        self._close_shortcuts_modal(page)
-        self._wait_for_verification_if_needed(page)
+            self._logger.info("Comment surface is hidden. Opening comments panel.")
+            self._open_comments_panel(page)
+            self._dismiss_overlays(page)
+            self._close_shortcuts_modal(page)
+            self._wait_for_verification_if_needed(page)
+            self._wait_for_comment_content(page)
 
-        if self._find_comment_input(page) is None:
+        if self._has_verification_challenge(page):
+            raise TikTokVerificationRequiredError(
+                "TikTok showed a verification challenge while opening comments."
+            )
+        if require_input and self._is_login_required(page):
             raise TikTokLoginRequiredError(
-                "Comment input not found after opening comments. "
-                "Check whether commenting is available for this video."
+                "Comment input is unavailable because TikTok requires a fresh login session."
             )
 
+        self._dump_comment_surface_debug(page, reason="comment_input_missing" if require_input else "comment_panel_missing")
+        message = (
+            "Comment input not found after opening comments. "
+            "Check whether commenting is available for this video."
+            if require_input
+            else "Comment panel did not become ready for scraping."
+        )
+        raise TikTokClientError(message)
+
+    def _comment_surface_ready(self, page: Page, *, require_input: bool) -> bool:
+        if self._find_comment_input(page) is not None:
+            return True
+
+        if not require_input and self._find_comment_item(page) is not None:
+            return True
+
+        if not require_input and self._has_comment_zero_state(page):
+            return True
+
+        return False
+
     def _open_comments_panel(self, page: Page) -> None:
-        selectors = [
-            'button[aria-label*="Read or add comments" i]',
-            'button[aria-label*="comments" i]',
-            'button:has-text("Comments")',
-            '[role="button"][aria-label*="comments" i]',
+        for description, locator in self._iter_comment_trigger_candidates(page):
+            if self._click_locator(locator, description=description, force=False):
+                page.wait_for_timeout(1_500)
+                self._logger.info("Opened comments panel via %s", description)
+                return
+
+            if self._click_locator(locator, description=description, force=True):
+                page.wait_for_timeout(1_500)
+                self._logger.info("Opened comments panel via forced %s", description)
+                return
+
+        clicked = self._click_comment_trigger_with_javascript(page)
+        if clicked:
+            self._logger.info("Opened comments panel via javascript fallback: %s", clicked)
+            page.wait_for_timeout(1_500)
+            return
+
+        self._logger.warning("Unable to find a visible comments trigger on the current TikTok page.")
+
+    def _iter_comment_trigger_candidates(self, page: Page) -> list[tuple[str, Locator]]:
+        return [
+            ("selector button[aria-label*='Read or add comments' i]", page.locator('button[aria-label*="Read or add comments" i]').first),
+            ("selector button[aria-label*='comment' i]", page.locator('button[aria-label*="comment" i]').first),
+            ("selector [role='button'][aria-label*='comment' i]", page.locator('[role="button"][aria-label*="comment" i]').first),
+            ("selector button:has-text('Comments')", page.locator('button:has-text("Comments")').first),
+            ("selector [role='button']:has-text('Comments')", page.locator('[role="button"]:has-text("Comments")').first),
+            ("selector [data-e2e='comment-icon']", page.locator('[data-e2e="comment-icon"]').first),
+            ("selector [data-e2e='browse-comment-icon']", page.locator('[data-e2e="browse-comment-icon"]').first),
+            ("role button /comment/i", page.get_by_role("button", name=re.compile("comment", re.I)).first),
+            ("label /comment/i", page.get_by_label(re.compile("comment", re.I)).first),
+            ("text /^Comments$/", page.get_by_text(re.compile("^Comments$", re.I)).first),
         ]
 
+    def _find_comment_trigger(self, page: Page) -> Locator | None:
+        for _description, locator in self._iter_comment_trigger_candidates(page):
+            try:
+                if locator.count() > 0 and locator.is_visible(timeout=500):
+                    return locator
+            except (TimeoutError, Error):
+                continue
+        return None
+
+    def _click_locator(self, locator: Locator, *, description: str, force: bool) -> bool:
+        try:
+            if locator.count() == 0:
+                return False
+        except Error:
+            return False
+
+        target = locator.first
+        try:
+            target.scroll_into_view_if_needed(timeout=1_000)
+        except (TimeoutError, Error):
+            pass
+
+        try:
+            if not force and not target.is_visible(timeout=800):
+                return False
+        except (TimeoutError, Error):
+            if not force:
+                return False
+
+        try:
+            target.click(timeout=2_000, force=force)
+            return True
+        except (TimeoutError, Error) as error:
+            self._logger.debug("Failed to click %s (force=%s): %s", description, force, error)
+            return False
+
+    def _click_comment_trigger_with_javascript(self, page: Page) -> str | None:
+        try:
+            result = page.evaluate(
+                """
+                () => {
+                  const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+                  const isVisible = (element) => {
+                    if (!element) {
+                      return false;
+                    }
+
+                    const style = window.getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+                    return (
+                      style.visibility !== 'hidden' &&
+                      style.display !== 'none' &&
+                      rect.width > 0 &&
+                      rect.height > 0
+                    );
+                  };
+
+                  const candidates = [];
+                  const selector = 'button, [role="button"], a, div';
+                  for (const element of document.querySelectorAll(selector)) {
+                    if (!isVisible(element)) {
+                      continue;
+                    }
+
+                    const aria = normalize(element.getAttribute('aria-label'));
+                    const text = normalize(element.innerText || element.textContent);
+                    const dataE2e = normalize(element.getAttribute('data-e2e'));
+                    const combined = `${aria} ${text} ${dataE2e}`.toLowerCase();
+                    if (!combined.includes('comment')) {
+                      continue;
+                    }
+
+                    let score = 0;
+                    if (aria.toLowerCase().includes('read or add comments')) score += 120;
+                    if (aria.toLowerCase().includes('comment')) score += 70;
+                    if (dataE2e.toLowerCase().includes('comment')) score += 50;
+                    if (text.toLowerCase() === 'comments') score += 35;
+                    if (/^\\d+$/.test(text) && aria.toLowerCase().includes('comment')) score += 25;
+                    if (element.tagName === 'BUTTON') score += 20;
+                    if (element.closest('header, nav, aside')) score -= 30;
+
+                    candidates.push({
+                      element,
+                      score,
+                      aria,
+                      text,
+                      dataE2e,
+                      className: normalize(element.className),
+                    });
+                  }
+
+                  candidates.sort((left, right) => right.score - left.score);
+                  const best = candidates[0];
+                  if (!best) {
+                    return null;
+                  }
+
+                  best.element.click();
+                  return JSON.stringify({
+                    aria: best.aria,
+                    text: best.text,
+                    data_e2e: best.dataE2e,
+                    class_name: best.className,
+                    score: best.score,
+                  });
+                }
+                """
+            )
+        except Error:
+            return None
+
+        return str(result) if result else None
+
+    def _wait_for_comment_content(self, page: Page, timeout_ms: int = 12_000) -> None:
+        deadline = time.monotonic() + (timeout_ms / 1_000)
+        while time.monotonic() < deadline:
+            if self._comment_surface_ready(page, require_input=False):
+                return
+
+            if self._has_verification_challenge(page) or self._is_login_required(page):
+                return
+
+            page.wait_for_timeout(500)
+
+    def _find_comment_item(self, page: Page) -> Locator | None:
+        selectors = [
+            '[data-e2e="comment-level-1"]',
+            '[data-e2e="comment-item"]',
+            'div[class*="CommentItem"]',
+            'li[class*="CommentItem"]',
+        ]
         for selector in selectors:
             locator = page.locator(selector).first
             try:
-                if locator.is_visible(timeout=2_000):
-                    locator.click()
-                    page.wait_for_timeout(2_000)
-                    self._logger.info("Opened comments panel via selector %s", selector)
-                    return
+                if locator.is_visible(timeout=1_000):
+                    return locator
             except (TimeoutError, Error):
                 continue
+        return None
+
+    def _has_comment_zero_state(self, page: Page) -> bool:
+        selectors = [
+            'text="Be the first to comment"',
+            'text="No comments yet"',
+            'text="No comments"',
+        ]
+        for selector in selectors:
+            locator = page.locator(selector).first
+            try:
+                if locator.is_visible(timeout=300):
+                    return True
+            except (TimeoutError, Error):
+                continue
+        return False
 
     def _close_shortcuts_modal(self, page: Page) -> None:
-        try:
-            shortcuts_title = page.locator("text=Introducing keyboard shortcuts!").first
-            if not shortcuts_title.is_visible(timeout=500):
-                return
-        except (TimeoutError, Error):
+        if not self._has_shortcuts_modal(page):
             return
 
         close_selectors = [
             'div[class*="DivKeyboardShortcutContainer"] div[class*="DivXMarkWrapper"]',
+            'div[class*="DivFixedBottomContainer"] div[class*="DivXMarkWrapper"]',
             'button[aria-label="Close"]',
             'button:has-text("Close")',
         ]
@@ -240,17 +651,71 @@ class TikTokPlaywrightClient:
                 if locator.is_visible(timeout=500):
                     locator.click(force=True)
                     page.wait_for_timeout(500)
-                    self._logger.info("Closed keyboard shortcuts modal.")
-                    return
+                    if not self._has_shortcuts_modal(page):
+                        self._logger.info("Closed keyboard shortcuts modal.")
+                        return
             except (TimeoutError, Error):
                 continue
 
         try:
             page.keyboard.press("Escape")
             page.wait_for_timeout(500)
-            self._logger.info("Closed keyboard shortcuts modal with Escape.")
+            if not self._has_shortcuts_modal(page):
+                self._logger.info("Closed keyboard shortcuts modal with Escape.")
+                return
         except (TimeoutError, Error):
             pass
+
+        removed_count = self._force_hide_shortcuts_modal(page)
+        if removed_count > 0:
+            self._logger.info("Force-hidden keyboard shortcuts modal via javascript.")
+
+    def _has_shortcuts_modal(self, page: Page) -> bool:
+        selectors = [
+            "text=Introducing keyboard shortcuts!",
+            'div[class*="DivKeyboardShortcutContainer"]',
+            'div[class*="DivFixedBottomContainer"] div[class*="DivKeyboardShortcutContent"]',
+        ]
+        for selector in selectors:
+            locator = page.locator(selector).first
+            try:
+                if locator.is_visible(timeout=300):
+                    return True
+            except (TimeoutError, Error):
+                continue
+        return False
+
+    def _force_hide_shortcuts_modal(self, page: Page) -> int:
+        try:
+            return int(
+                page.evaluate(
+                    """
+                    () => {
+                      let removed = 0;
+                      const selectors = [
+                        'div[class*="DivKeyboardShortcutContainer"]',
+                        'div[class*="DivFixedBottomContainer"]'
+                      ];
+
+                      for (const selector of selectors) {
+                        for (const element of document.querySelectorAll(selector)) {
+                          const text = (element.innerText || element.textContent || '').toLowerCase();
+                          if (!text.includes('keyboard shortcut')) {
+                            continue;
+                          }
+
+                          element.remove();
+                          removed += 1;
+                        }
+                      }
+
+                      return removed;
+                    }
+                    """
+                )
+            )
+        except Error:
+            return 0
 
     def _wait_for_verification_if_needed(self, page: Page) -> None:
         if not self._has_verification_challenge(page):
@@ -291,11 +756,71 @@ class TikTokPlaywrightClient:
                 continue
         return False
 
-    def _scroll_for_comments(self, page: Page) -> None:
+    def _scroll_for_comments(self, page: Page) -> Page:
         for round_number in range(1, self._config.default_scrape_scroll_rounds + 1):
             self._logger.info("Scrolling for comments, round %s", round_number)
-            page.mouse.wheel(0, 2_000)
+            page = self._prepare_comment_panel(page, video_url=page.url, require_input=False)
+            self._wait_for_verification_if_needed(page)
+            try:
+                page.evaluate(
+                    """
+                    (delta) => {
+                      const rootSelectors = [
+                        '[data-e2e="comment-level-1"]',
+                        '[data-e2e="comment-item"]',
+                        '[data-e2e="comment-input"]',
+                        'div[class*="CommentList"]',
+                        'div[class*="CommentPanel"]'
+                      ];
+
+                      const seen = new Set();
+                      const candidates = [];
+                      const push = (node) => {
+                        if (node && !seen.has(node)) {
+                          seen.add(node);
+                          candidates.push(node);
+                        }
+                      };
+
+                      for (const selector of rootSelectors) {
+                        const root = document.querySelector(selector);
+                        let current = root;
+                        while (current) {
+                          push(current);
+                          current = current.parentElement;
+                        }
+                      }
+
+                      const isScrollable = (node) => {
+                        if (!node) {
+                          return false;
+                        }
+
+                        const style = window.getComputedStyle(node);
+                        const overflowY = style.overflowY;
+                        return (
+                          node.scrollHeight > node.clientHeight + 40 &&
+                          ['auto', 'scroll', 'overlay'].includes(overflowY)
+                        );
+                      };
+
+                      for (const node of candidates) {
+                        if (isScrollable(node)) {
+                          node.scrollBy(0, delta);
+                          return true;
+                        }
+                      }
+
+                      window.scrollBy(0, delta);
+                      return false;
+                    }
+                    """,
+                    1_800,
+                )
+            except Error:
+                page.mouse.wheel(0, 2_000)
             page.wait_for_timeout(int(self._config.default_scroll_pause_seconds * 1_000))
+        return page
 
     def _collect_from_response(self, response: Any, collected: dict[str, ScrapedComment]) -> None:
         url = response.url.lower()
@@ -396,7 +921,7 @@ class TikTokPlaywrightClient:
         rows = page.evaluate(
             """
             () => {
-              const selectors = [
+              const rowSelectors = [
                 '[data-e2e="comment-level-1"]',
                 '[data-e2e="comment-item"]',
                 'div[class*="CommentItem"]',
@@ -404,27 +929,65 @@ class TikTokPlaywrightClient:
               ];
 
               const elements = [];
-              for (const selector of selectors) {
+              const seen = new Set();
+              for (const selector of rowSelectors) {
                 for (const element of document.querySelectorAll(selector)) {
-                  if (!elements.includes(element)) {
+                  if (!seen.has(element)) {
+                    seen.add(element);
                     elements.push(element);
                   }
                 }
               }
 
+              const normalizeLine = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+              const looksLikeMeta = (value) => {
+                return (
+                  /^\\d+$/.test(value) ||
+                  /^\\d+[smhdwy]$/.test(value.toLowerCase()) ||
+                  ['reply', 'like', 'liked', 'pinned'].includes(value.toLowerCase())
+                );
+              };
+
               return elements.map((element, index) => {
                 const anchor = element.querySelector('a[href*="/@"]');
-                const possibleTextNode =
-                  element.querySelector('[data-e2e="comment-level-1"] span') ||
-                  element.querySelector('[data-e2e="comment-item"] span') ||
+                const href = anchor ? (anchor.getAttribute('href') || '') : '';
+                const usernameMatch = href.match(new RegExp('/@([^/?]+)'));
+                const username = usernameMatch
+                  ? usernameMatch[1]
+                  : normalizeLine(anchor ? anchor.textContent : '').replace(/^@/, '') || 'unknown';
+                const displayName = normalizeLine(anchor ? anchor.textContent : '') || username;
+                const textNode =
+                  element.querySelector('[data-e2e*="comment-text"]') ||
                   element.querySelector('p') ||
-                  element.querySelector('span');
-
-                const username = anchor ? anchor.textContent.trim().replace(/^@/, '') : 'unknown';
-                const displayName = username;
-                const text = possibleTextNode ? possibleTextNode.textContent.trim() : '';
-                const likeNode = Array.from(element.querySelectorAll('span, strong')).find(node => /^\\d+$/.test(node.textContent.trim()));
-                const likes = likeNode ? likeNode.textContent.trim() : '';
+                  element.querySelector('span[data-text="true"]');
+                const lines = Array.from(
+                  new Set(
+                    (element.innerText || element.textContent || '')
+                      .split(/\\n+/)
+                      .map(normalizeLine)
+                      .filter(Boolean)
+                  )
+                );
+                const text =
+                  normalizeLine(textNode ? textNode.textContent : '') ||
+                  lines.find((line) => {
+                    return (
+                      line !== displayName &&
+                      line !== username &&
+                      line !== `@${username}` &&
+                      !looksLikeMeta(line)
+                    );
+                  }) ||
+                  '';
+                const likeNode = Array.from(element.querySelectorAll('span, strong')).find((node) => {
+                  const value = normalizeLine(node.textContent);
+                  return /^\\d+$/.test(value);
+                });
+                const likes = likeNode ? normalizeLine(likeNode.textContent) : '';
+                const timeNode = element.querySelector('time') || element.querySelector('[data-e2e*="comment-time"]');
+                const publishedAt = normalizeLine(
+                  timeNode ? (timeNode.getAttribute('datetime') || timeNode.textContent) : ''
+                );
 
                 return {
                   comment_id: element.getAttribute('data-comment-id') || `${username}:${index}:${text}`,
@@ -432,31 +995,30 @@ class TikTokPlaywrightClient:
                   author_display_name: displayName,
                   text,
                   likes,
-                  published_at: ''
+                  published_at: publishedAt
                 };
               }).filter(item => item.text);
             }
             """
         )
 
-        comments: list[ScrapedComment] = []
+        comments_by_id: dict[str, ScrapedComment] = {}
         for row in rows:
             likes = int(row["likes"]) if str(row.get("likes") or "").isdigit() else None
-            comments.append(
-                ScrapedComment(
-                    comment_id=str(row["comment_id"]),
-                    author_username=str(row["author_username"]),
-                    author_display_name=str(row["author_display_name"]),
-                    text=str(row["text"]),
-                    likes=likes,
-                    published_at=str(row.get("published_at") or "") or None,
-                )
+            comment = ScrapedComment(
+                comment_id=str(row["comment_id"]),
+                author_username=str(row["author_username"]),
+                author_display_name=str(row["author_display_name"]),
+                text=str(row["text"]),
+                likes=likes,
+                published_at=str(row.get("published_at") or "") or None,
             )
-        return comments
+            comments_by_id.setdefault(comment.comment_id, comment)
+        return list(comments_by_id.values())
 
-    def _send_single_comment(self, page: Page, outgoing_comment: OutgoingComment) -> SendResult:
+    def _send_single_comment(self, page: Page, outgoing_comment: OutgoingComment) -> tuple[Page, SendResult]:
         self._logger.info("Sending comment #%s to %s", outgoing_comment.order, outgoing_comment.video_url)
-        self._prepare_comment_panel(page)
+        page = self._prepare_comment_panel(page, video_url=outgoing_comment.video_url, require_input=True)
         input_locator = self._find_comment_input(page)
         if input_locator is None:
             raise TikTokLoginRequiredError(
@@ -487,7 +1049,7 @@ class TikTokPlaywrightClient:
             success = False
 
         self._logger.info("Comment #%s result: %s", outgoing_comment.order, details)
-        return SendResult(
+        return page, SendResult(
             outgoing_comment=outgoing_comment,
             success=success,
             details=details,
@@ -496,9 +1058,13 @@ class TikTokPlaywrightClient:
     def _find_comment_input(self, page: Page) -> Locator | None:
         selectors = [
             '[data-e2e="comment-input"] div[contenteditable="true"][role="textbox"]',
+            '[data-e2e="comment-input"] div[contenteditable="true"]',
+            'div.public-DraftEditor-content[contenteditable="true"]',
+            'div[class*="DraftEditor-content"][contenteditable="true"]',
             'div[contenteditable="true"][role="textbox"]',
             'div[contenteditable="true"][data-e2e*="comment"]',
             'textarea[data-e2e="comment-input"]',
+            'div[class*="comment-panel-input"]',
             '[data-e2e="comment-input"]',
         ]
         for selector in selectors:
@@ -510,26 +1076,169 @@ class TikTokPlaywrightClient:
                 continue
         return None
 
+    def _dump_comment_surface_debug(self, page: Page, *, reason: str) -> None:
+        try:
+            payload = {
+                "reason": reason,
+                "url": page.url,
+                "title": page.title(),
+                "login_required": self._is_login_required(page),
+                "verification_required": self._has_verification_challenge(page),
+                "body_text_snippet": (page.locator("body").inner_text(timeout=2_000) or "")[:4000],
+                "comment_trigger_candidates": page.evaluate(
+                    """
+                    () => {
+                      const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();
+                      const isVisible = (element) => {
+                        if (!element) {
+                          return false;
+                        }
+
+                        const style = window.getComputedStyle(element);
+                        const rect = element.getBoundingClientRect();
+                        return (
+                          style.visibility !== 'hidden' &&
+                          style.display !== 'none' &&
+                          rect.width > 0 &&
+                          rect.height > 0
+                        );
+                      };
+
+                      const rows = [];
+                      for (const element of document.querySelectorAll('button, [role="button"], a, div')) {
+                        const aria = normalize(element.getAttribute('aria-label'));
+                        const text = normalize(element.innerText || element.textContent);
+                        const dataE2e = normalize(element.getAttribute('data-e2e'));
+                        const combined = `${aria} ${text} ${dataE2e}`.toLowerCase();
+                        if (!combined.includes('comment')) {
+                          continue;
+                        }
+
+                        rows.push({
+                          tag: element.tagName,
+                          aria_label: aria,
+                          text,
+                          data_e2e: dataE2e,
+                          visible: isVisible(element),
+                          class_name: normalize(element.className),
+                        });
+                        if (rows.length >= 25) {
+                          break;
+                        }
+                      }
+                      return rows;
+                    }
+                    """
+                ),
+            }
+            debug_path = self._config.logs_dir / "comment_surface_debug.json"
+            debug_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            self._logger.warning("Saved comment surface debug dump to %s", debug_path)
+        except Exception as error:
+            self._logger.warning("Unable to write comment surface debug dump: %s", error)
+
     def _fill_comment_input(self, page: Page, input_locator: Locator, text: str) -> None:
         self._wait_for_verification_if_needed(page)
+        self._close_shortcuts_modal(page)
         input_locator = self._resolve_comment_input(input_locator)
         content_editable = input_locator.get_attribute("contenteditable")
-        try:
-            input_locator.click()
-        except (TimeoutError, Error) as error:
+
+        if content_editable == "true":
+            self._focus_comment_editor(page, input_locator)
+            page.keyboard.press("Control+A")
+            page.keyboard.press("Backspace")
+            page.keyboard.type(text, delay=40)
+        else:
+            try:
+                input_locator.focus()
+                input_locator.fill(text)
+            except (TimeoutError, Error) as error:
+                raise TikTokClientError(f"Unable to fill the comment input: {error}") from error
+
+        self._wait_for_comment_post_button(page)
+
+    def _focus_comment_editor(self, page: Page, input_locator: Locator) -> None:
+        targets = [
+            ("editor", input_locator),
+            ("comment-input", page.locator('[data-e2e="comment-input"]').first),
+            (
+                "editor-container",
+                input_locator.locator("xpath=ancestor-or-self::*[@data-e2e='comment-input'][1]").first,
+            ),
+            ("placeholder", page.locator('[data-e2e="comment-input"] [id^="placeholder-"]').first),
+        ]
+
+        last_error: Exception | None = None
+        for description, target in targets:
             self._close_shortcuts_modal(page)
             self._wait_for_verification_if_needed(page)
             try:
-                input_locator.click(timeout=3_000)
-            except (TimeoutError, Error):
-                raise TikTokClientError(f"Unable to focus the comment input: {error}") from error
+                input_locator.focus()
+                if self._is_comment_editor_focused(input_locator):
+                    return
+            except (TimeoutError, Error) as error:
+                last_error = error
 
-        if content_editable == "true":
-            page.keyboard.press("Control+A")
-            page.keyboard.press("Backspace")
-            page.keyboard.type(text)
-        else:
-            input_locator.fill(text)
+            try:
+                if target.count() == 0:
+                    continue
+            except Error:
+                continue
+
+            try:
+                target.click(timeout=2_000, force=True)
+            except (TimeoutError, Error) as error:
+                last_error = error
+
+            try:
+                input_locator.evaluate(
+                    """
+                    (element) => {
+                      element.focus();
+                    }
+                    """
+                )
+                page.wait_for_timeout(150)
+                if self._is_comment_editor_focused(input_locator):
+                    return
+            except (TimeoutError, Error) as error:
+                last_error = error
+
+            self._logger.debug("Unable to focus comment editor via %s.", description)
+
+        if last_error is not None:
+            raise TikTokClientError(f"Unable to focus the comment input: {last_error}") from last_error
+        raise TikTokClientError("Unable to focus the comment input.")
+
+    def _is_comment_editor_focused(self, input_locator: Locator) -> bool:
+        try:
+            return bool(
+                input_locator.evaluate(
+                    """
+                    (element) => {
+                      const active = document.activeElement;
+                      return active === element || element.contains(active);
+                    }
+                    """
+                )
+            )
+        except (TimeoutError, Error):
+            return False
+
+    def _wait_for_comment_post_button(self, page: Page, timeout_ms: int = 5_000) -> None:
+        deadline = time.monotonic() + (timeout_ms / 1_000)
+        locator = page.locator('button[data-e2e="comment-post"]').first
+        while time.monotonic() < deadline:
+            try:
+                if locator.is_enabled(timeout=250):
+                    return
+            except (TimeoutError, Error):
+                return
+
+            page.wait_for_timeout(200)
 
     def _submit_comment(self, page: Page) -> None:
         self._wait_for_verification_if_needed(page)
