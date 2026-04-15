@@ -5,6 +5,7 @@ import logging
 import re
 import time
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -36,9 +37,36 @@ class TikTokPlaywrightClient:
         self._config = config
         self._logger = logger
         self._account = account
+        self._active_video_url = ""
+        self._active_account_username = self._normalize_username(account.tiktok_username)
+
+    def ensure_session_ready(self) -> str | None:
+        self._logger.info("Активую акаунт %s.", self._account.name)
+        with sync_playwright() as playwright:
+            context = self._open_context(playwright)
+            page = self._create_working_page(context)
+            try:
+                try:
+                    page = self._goto_with_retry(page, self._account.login_url, wait_until="domcontentloaded")
+                except (TimeoutError, Error) as error:
+                    raise TikTokClientError(f"Не вдалося відкрити сторінку логіну TikTok: {error}") from error
+
+                page.wait_for_timeout(2_000)
+                self._dismiss_overlays(page)
+                page = self._ensure_logged_in(page)
+                username = self._resolve_account_username(page)
+                if username:
+                    self._logger.info("Акаунт %s активовано як @%s.", self._account.name, username)
+                else:
+                    self._logger.info("Акаунт %s активовано.", self._account.name)
+                return username
+            finally:
+                self._persist_storage_state(context)
+                context.close()
 
     def scrape_comments(self, video_url: str) -> list[ScrapedComment]:
-        self._logger.info("Starting comment scrape for %s", video_url)
+        self._logger.info("Починаю збір коментарів для %s.", video_url)
+        self._active_video_url = video_url
         with sync_playwright() as playwright:
             context = self._open_context(playwright)
             page = self._create_working_page(context)
@@ -49,18 +77,25 @@ class TikTokPlaywrightClient:
 
             page.on("response", handle_response)
             try:
-                page = self._open_video_page(page, video_url, require_login=False)
+                page = self._open_video_page(page, video_url, require_login=True)
+                self._active_account_username = self._resolve_account_username(page)
                 page = self._scroll_for_comments(page)
                 self._wait_for_comment_content(page)
 
                 if not collected:
-                    self._logger.info("Network capture returned no comments, falling back to DOM parsing.")
+                    self._logger.info("Мережевий збір нічого не повернув, переходжу на DOM-збір.")
                     for comment in self._extract_comments_from_dom(page):
                         collected[comment.comment_id] = comment
 
-                comments = list(collected.values())
-                self._logger.info("Collected %s comments for %s", len(comments), video_url)
-                return comments
+                comments = [self._apply_account_reply_flag(comment) for comment in collected.values()]
+                unreplied_comments = [comment for comment in comments if not comment.has_account_reply]
+                self._logger.info(
+                    "Акаунт %s: зібрано %s коментарів, без моєї відповіді %s.",
+                    self._account.name,
+                    len(comments),
+                    len(unreplied_comments),
+                )
+                return unreplied_comments
             finally:
                 self._persist_storage_state(context)
                 context.close()
@@ -68,9 +103,9 @@ class TikTokPlaywrightClient:
     def send_comments(self, comments: Iterable[OutgoingComment]) -> list[SendResult]:
         comment_batch = list(comments)
         if not comment_batch:
-            raise ValueError("The outgoing comment list is empty.")
+            raise ValueError("Список коментарів для надсилання порожній.")
 
-        self._logger.info("Starting comment posting for %s comments.", len(comment_batch))
+        self._logger.info("Починаю надсилання %s коментарів з акаунта %s.", len(comment_batch), self._account.name)
         with sync_playwright() as playwright:
             context = self._open_context(playwright)
             page = self._create_working_page(context)
@@ -81,7 +116,8 @@ class TikTokPlaywrightClient:
                 for item in comment_batch:
                     if item.delay_seconds > 0:
                         self._logger.info(
-                            "Waiting %s seconds before sending comment #%s.",
+                            "Акаунт %s: чекаю %s с перед коментарем #%s.",
+                            self._account.name,
                             item.delay_seconds,
                             item.order,
                         )
@@ -104,7 +140,7 @@ class TikTokPlaywrightClient:
         browser_type = getattr(playwright, self._account.browser_type, None)
         if browser_type is None:
             raise TikTokClientError(
-                f"Unsupported browser_type '{self._account.browser_type}' in account config."
+                f"У конфігу вказано непідтримуваний browser_type: {self._account.browser_type}."
             )
 
         profile_exists = self._account.user_data_dir.exists() and any(self._account.user_data_dir.iterdir())
@@ -119,7 +155,7 @@ class TikTokPlaywrightClient:
             launch_kwargs["channel"] = self._account.browser_channel
 
         self._logger.info(
-            "Launching %s browser with persistent profile %s.",
+            "Запускаю %s з постійним профілем %s.",
             self._account.browser_type,
             self._account.user_data_dir,
         )
@@ -139,11 +175,11 @@ class TikTokPlaywrightClient:
         return context.new_page()
 
     def _restore_storage_state_backup(self, context: BrowserContext) -> None:
-        self._logger.info("Restoring storage state backup from %s", self._account.storage_state_path)
+        self._logger.info("Відновлюю резервний storage state з %s.", self._account.storage_state_path)
         try:
             payload = json.loads(self._account.storage_state_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
-            self._logger.warning("Unable to load storage state backup: %s", error)
+            self._logger.warning("Не вдалося прочитати резервний storage state: %s", error)
             return
 
         cookies = payload.get("cookies") or []
@@ -151,7 +187,7 @@ class TikTokPlaywrightClient:
             try:
                 context.add_cookies(cookies)
             except Error as error:
-                self._logger.warning("Unable to restore TikTok cookies from storage backup: %s", error)
+                self._logger.warning("Не вдалося відновити cookies TikTok із storage state: %s", error)
 
         origins = payload.get("origins") or []
         if not origins:
@@ -180,7 +216,7 @@ class TikTokPlaywrightClient:
                         local_storage,
                     )
                 except (TimeoutError, Error) as error:
-                    self._logger.warning("Unable to restore local storage for %s: %s", origin_url, error)
+                    self._logger.warning("Не вдалося відновити localStorage для %s: %s", origin_url, error)
         finally:
             try:
                 if not page.is_closed():
@@ -193,14 +229,14 @@ class TikTokPlaywrightClient:
             self._account.storage_state_path.parent.mkdir(parents=True, exist_ok=True)
             context.storage_state(path=str(self._account.storage_state_path))
         except (OSError, Error) as error:
-            self._logger.warning("Unable to save storage state backup: %s", error)
+            self._logger.warning("Не вдалося зберегти резервний storage state: %s", error)
 
     def _open_video_page(self, page: Page, video_url: str, *, require_login: bool) -> Page:
-        self._logger.info("Opening video page %s", video_url)
+        self._logger.info("Відкриваю сторінку відео %s.", video_url)
         try:
             page = self._goto_with_retry(page, video_url, wait_until="domcontentloaded")
         except (TimeoutError, Error) as error:
-            raise TikTokClientError(f"Unable to open TikTok video page: {error}") from error
+            raise TikTokClientError(f"Не вдалося відкрити сторінку TikTok-відео: {error}") from error
 
         page.wait_for_timeout(3_000)
         self._wait_for_video_surface(page)
@@ -218,20 +254,20 @@ class TikTokPlaywrightClient:
 
         if self._account.headless:
             raise TikTokLoginRequiredError(
-                "TikTok requires login, but the browser runs headless. "
-                "Disable headless mode and log in manually once."
+                "TikTok просить логін, але браузер запущено в headless-режимі. "
+                "Вимкніть headless і увійдіть вручну один раз."
             )
 
         if not self._account.bootstrap_login_if_missing:
             raise TikTokLoginRequiredError(
-                "TikTok session is not active. Enable bootstrap_login_if_missing or refresh the profile."
+                "Сесія TikTok неактивна. Увімкніть bootstrap_login_if_missing або оновіть профіль."
             )
 
-        self._logger.info("TikTok session is not active. Opening manual login flow.")
+        self._logger.info("Сесія TikTok неактивна. Відкриваю ручний логін.")
         try:
             page = self._goto_with_retry(page, self._account.login_url, wait_until="domcontentloaded")
         except (TimeoutError, Error) as error:
-            raise TikTokClientError(f"Unable to open TikTok login page: {error}") from error
+            raise TikTokClientError(f"Не вдалося відкрити сторінку логіну TikTok: {error}") from error
         print()
         print("Сесія TikTok неактивна або протухла.")
         print("Увійдіть у TikTok вручну в уже відкритому профілі браузера.")
@@ -242,7 +278,7 @@ class TikTokPlaywrightClient:
         self._wait_for_verification_if_needed(page)
         if self._is_login_required(page):
             raise TikTokLoginRequiredError(
-                "TikTok login is still required after manual authentication."
+                "Після ручного входу TikTok усе ще просить логін."
             )
 
         self._persist_storage_state(page.context)
@@ -251,7 +287,7 @@ class TikTokPlaywrightClient:
                 page = self._goto_with_retry(page, return_url, wait_until="domcontentloaded")
             except (TimeoutError, Error) as error:
                 raise TikTokClientError(
-                    f"Unable to return to the TikTok video page after login: {error}"
+                    f"Не вдалося повернутись на сторінку відео після логіну: {error}"
                 ) from error
             page.wait_for_timeout(3_000)
         return page
@@ -269,7 +305,7 @@ class TikTokPlaywrightClient:
                 if attempt == len(wait_strategies):
                     raise
                 self._logger.warning(
-                    "Timed out opening %s on attempt %s/%s with wait_until=%s. Retrying.",
+                    "Не вдалося вчасно відкрити %s, спроба %s/%s з wait_until=%s. Повторюю.",
                     url,
                     attempt,
                     len(wait_strategies),
@@ -281,7 +317,7 @@ class TikTokPlaywrightClient:
 
                 if self._urls_match(page.url, url):
                     self._logger.warning(
-                        "Navigation to %s was aborted on attempt %s, but the page already reached %s.",
+                        "Навігацію до %s перервано на спробі %s, але сторінка вже дійшла до %s.",
                         url,
                         attempt,
                         page.url,
@@ -292,7 +328,7 @@ class TikTokPlaywrightClient:
                 if attempt == len(wait_strategies):
                     raise
                 self._logger.warning(
-                    "Navigation to %s was aborted on attempt %s/%s with wait_until=%s. Retrying on a fresh page.",
+                    "Навігацію до %s перервано на спробі %s/%s з wait_until=%s. Повторюю на новій вкладці.",
                     url,
                     attempt,
                     len(wait_strategies),
@@ -375,6 +411,59 @@ class TikTokPlaywrightClient:
 
             page.wait_for_timeout(500)
 
+    def _resolve_account_username(self, page: Page) -> str | None:
+        if self._account.tiktok_username:
+            return self._normalize_username(self._account.tiktok_username)
+
+        candidates = [
+            page.locator('a[data-e2e="nav-profile"]').first,
+            page.locator('a[href^="/@"][data-e2e*="profile"]').first,
+            page.locator('a[href^="/@"][aria-label*="Profile" i]').first,
+        ]
+        for locator in candidates:
+            try:
+                if locator.count() == 0:
+                    continue
+                href = locator.get_attribute("href") or ""
+                username = self._extract_username_from_href(href)
+                if username:
+                    return username
+            except (TimeoutError, Error):
+                continue
+
+        try:
+            username = page.evaluate(
+                """
+                () => {
+                  const links = Array.from(document.querySelectorAll('a[href^="/@"]'));
+                  const score = (element) => {
+                    const dataE2e = (element.getAttribute('data-e2e') || '').toLowerCase();
+                    const aria = (element.getAttribute('aria-label') || '').toLowerCase();
+                    const text = (element.innerText || element.textContent || '').toLowerCase();
+                    let value = 0;
+                    if (dataE2e.includes('profile')) value += 100;
+                    if (aria.includes('profile')) value += 80;
+                    if (text.includes('profile')) value += 40;
+                    if (element.closest('nav, header, aside')) value += 20;
+                    return value;
+                  };
+
+                  links.sort((left, right) => score(right) - score(left));
+                  const target = links[0];
+                  if (!target) {
+                    return null;
+                  }
+
+                  const href = target.getAttribute('href') || '';
+                  const match = href.match(new RegExp('/@([^/?]+)'));
+                  return match ? match[1] : null;
+                }
+                """
+            )
+            return self._normalize_username(username)
+        except Error:
+            return None
+
     def _dismiss_overlays(self, page: Page) -> None:
         selectors = [
             'button:has-text("Accept all")',
@@ -388,7 +477,7 @@ class TikTokPlaywrightClient:
                 locator = page.locator(selector).first
                 if locator.is_visible(timeout=1_000):
                     locator.click()
-                    self._logger.info("Dismissed overlay via selector %s", selector)
+                    self._logger.info("Закрив оверлей через селектор %s.", selector)
                     page.wait_for_timeout(500)
             except (TimeoutError, Error):
                 continue
@@ -409,7 +498,7 @@ class TikTokPlaywrightClient:
             if self._comment_surface_ready(page, require_input=require_input):
                 return page
 
-            self._logger.info("Comment surface is hidden. Opening comments panel.")
+            self._logger.info("Панель коментарів прихована, відкриваю її.")
             self._open_comments_panel(page)
             self._dismiss_overlays(page)
             self._close_shortcuts_modal(page)
@@ -418,19 +507,19 @@ class TikTokPlaywrightClient:
 
         if self._has_verification_challenge(page):
             raise TikTokVerificationRequiredError(
-                "TikTok showed a verification challenge while opening comments."
+                "TikTok показав перевірку під час відкриття коментарів."
             )
         if require_input and self._is_login_required(page):
             raise TikTokLoginRequiredError(
-                "Comment input is unavailable because TikTok requires a fresh login session."
+                "Поле коментаря недоступне, бо TikTok просить оновити сесію."
             )
 
         self._dump_comment_surface_debug(page, reason="comment_input_missing" if require_input else "comment_panel_missing")
         message = (
-            "Comment input not found after opening comments. "
-            "Check whether commenting is available for this video."
+            "Не знайшов поле введення після відкриття коментарів. "
+            "Перевірте, чи для цього відео доступне коментування."
             if require_input
-            else "Comment panel did not become ready for scraping."
+            else "Панель коментарів не стала готовою для збирання."
         )
         raise TikTokClientError(message)
 
@@ -450,21 +539,21 @@ class TikTokPlaywrightClient:
         for description, locator in self._iter_comment_trigger_candidates(page):
             if self._click_locator(locator, description=description, force=False):
                 page.wait_for_timeout(1_500)
-                self._logger.info("Opened comments panel via %s", description)
+                self._logger.info("Відкрив панель коментарів через %s.", description)
                 return
 
             if self._click_locator(locator, description=description, force=True):
                 page.wait_for_timeout(1_500)
-                self._logger.info("Opened comments panel via forced %s", description)
+                self._logger.info("Відкрив панель коментарів через примусовий клік %s.", description)
                 return
 
         clicked = self._click_comment_trigger_with_javascript(page)
         if clicked:
-            self._logger.info("Opened comments panel via javascript fallback: %s", clicked)
+            self._logger.info("Відкрив панель коментарів через javascript fallback: %s.", clicked)
             page.wait_for_timeout(1_500)
             return
 
-        self._logger.warning("Unable to find a visible comments trigger on the current TikTok page.")
+        self._logger.warning("Не вдалося знайти видимий тригер відкриття коментарів на сторінці.")
 
     def _iter_comment_trigger_candidates(self, page: Page) -> list[tuple[str, Locator]]:
         return [
@@ -652,7 +741,7 @@ class TikTokPlaywrightClient:
                     locator.click(force=True)
                     page.wait_for_timeout(500)
                     if not self._has_shortcuts_modal(page):
-                        self._logger.info("Closed keyboard shortcuts modal.")
+                        self._logger.info("Закрив вікно швидких клавіш.")
                         return
             except (TimeoutError, Error):
                 continue
@@ -661,14 +750,14 @@ class TikTokPlaywrightClient:
             page.keyboard.press("Escape")
             page.wait_for_timeout(500)
             if not self._has_shortcuts_modal(page):
-                self._logger.info("Closed keyboard shortcuts modal with Escape.")
+                self._logger.info("Закрив вікно швидких клавіш через Escape.")
                 return
         except (TimeoutError, Error):
             pass
 
         removed_count = self._force_hide_shortcuts_modal(page)
         if removed_count > 0:
-            self._logger.info("Force-hidden keyboard shortcuts modal via javascript.")
+            self._logger.info("Примусово сховав вікно швидких клавіш через javascript.")
 
     def _has_shortcuts_modal(self, page: Page) -> bool:
         selectors = [
@@ -723,8 +812,8 @@ class TikTokPlaywrightClient:
 
         if self._account.headless:
             raise TikTokVerificationRequiredError(
-                "TikTok showed a verification challenge. "
-                "Run in headed mode, solve it manually, then retry."
+                "TikTok показав перевірку. "
+                "Запустіть браузер не в headless-режимі, пройдіть її вручну і повторіть."
             )
 
         print()
@@ -750,7 +839,7 @@ class TikTokPlaywrightClient:
             locator = page.locator(f"text={text}").first
             try:
                 if locator.is_visible(timeout=300):
-                    self._logger.info("Detected TikTok verification challenge: %s", text)
+                    self._logger.info("TikTok показав перевірку безпеки: %s.", text)
                     return True
             except (TimeoutError, Error):
                 continue
@@ -758,7 +847,11 @@ class TikTokPlaywrightClient:
 
     def _scroll_for_comments(self, page: Page) -> Page:
         for round_number in range(1, self._config.default_scrape_scroll_rounds + 1):
-            self._logger.info("Scrolling for comments, round %s", round_number)
+            self._logger.info(
+                "Прокрутка коментарів %s/%s: підвантажую наступну порцію.",
+                round_number,
+                self._config.default_scrape_scroll_rounds,
+            )
             page = self._prepare_comment_panel(page, video_url=page.url, require_input=False)
             self._wait_for_verification_if_needed(page)
             try:
@@ -908,13 +1001,16 @@ class TikTokPlaywrightClient:
         published_at = self._parse_timestamp(
             self._first_non_empty(payload.get("create_time"), payload.get("created_at"))
         )
+        reply_author_usernames = self._extract_reply_usernames_from_payload(payload)
         return ScrapedComment(
+            video_url=self._active_video_url,
             comment_id=comment_id,
             author_username=str(username),
             author_display_name=str(display_name),
             text=comment_text,
             likes=likes,
             published_at=published_at,
+            reply_author_usernames=reply_author_usernames,
         )
 
     def _extract_comments_from_dom(self, page: Page) -> list[ScrapedComment]:
@@ -988,6 +1084,14 @@ class TikTokPlaywrightClient:
                 const publishedAt = normalizeLine(
                   timeNode ? (timeNode.getAttribute('datetime') || timeNode.textContent) : ''
                 );
+                const anchorUsernames = Array.from(element.querySelectorAll('a[href*="/@"]'))
+                  .map((node) => {
+                    const hrefValue = node.getAttribute('href') || '';
+                    const match = hrefValue.match(new RegExp('/@([^/?]+)'));
+                    return match ? match[1] : normalizeLine(node.textContent).replace(/^@/, '');
+                  })
+                  .filter(Boolean);
+                const replyAuthors = Array.from(new Set(anchorUsernames.filter((value) => value !== username)));
 
                 return {
                   comment_id: element.getAttribute('data-comment-id') || `${username}:${index}:${text}`,
@@ -995,7 +1099,8 @@ class TikTokPlaywrightClient:
                   author_display_name: displayName,
                   text,
                   likes,
-                  published_at: publishedAt
+                  published_at: publishedAt,
+                  reply_author_usernames: replyAuthors
                 };
               }).filter(item => item.text);
             }
@@ -1006,23 +1111,30 @@ class TikTokPlaywrightClient:
         for row in rows:
             likes = int(row["likes"]) if str(row.get("likes") or "").isdigit() else None
             comment = ScrapedComment(
+                video_url=self._active_video_url,
                 comment_id=str(row["comment_id"]),
                 author_username=str(row["author_username"]),
                 author_display_name=str(row["author_display_name"]),
                 text=str(row["text"]),
                 likes=likes,
                 published_at=str(row.get("published_at") or "") or None,
+                reply_author_usernames=tuple(str(item) for item in row.get("reply_author_usernames") or []),
             )
             comments_by_id.setdefault(comment.comment_id, comment)
         return list(comments_by_id.values())
 
     def _send_single_comment(self, page: Page, outgoing_comment: OutgoingComment) -> tuple[Page, SendResult]:
-        self._logger.info("Sending comment #%s to %s", outgoing_comment.order, outgoing_comment.video_url)
+        self._logger.info(
+            "Акаунт %s: надсилаю коментар #%s на %s.",
+            self._account.name,
+            outgoing_comment.order,
+            outgoing_comment.video_url,
+        )
         page = self._prepare_comment_panel(page, video_url=outgoing_comment.video_url, require_input=True)
         input_locator = self._find_comment_input(page)
         if input_locator is None:
             raise TikTokLoginRequiredError(
-                "Comment input not found. Refresh storage state or reopen the comments panel."
+                "Не знайшов поле коментаря. Оновіть сесію або заново відкрийте панель коментарів."
             )
 
         self._fill_comment_input(page, input_locator, outgoing_comment.text)
@@ -1041,15 +1153,22 @@ class TikTokPlaywrightClient:
             success = response.ok
         except TimeoutError:
             self._logger.warning(
-                "No publish response captured for comment #%s.",
+                "Акаунт %s: не дочекався publish-відповіді для коментаря #%s.",
+                self._account.name,
                 outgoing_comment.order,
             )
             page.wait_for_timeout(2_500)
-            details = "No publish response captured; submit action was triggered."
+            details = "Відповідь publish не перехоплена, але кнопку надсилання було натиснуто."
             success = False
 
-        self._logger.info("Comment #%s result: %s", outgoing_comment.order, details)
+        self._logger.info(
+            "Акаунт %s: коментар #%s %s.",
+            self._account.name,
+            outgoing_comment.order,
+            details,
+        )
         return page, SendResult(
+            account_name=self._account.name,
             outgoing_comment=outgoing_comment,
             success=success,
             details=details,
@@ -1136,9 +1255,9 @@ class TikTokPlaywrightClient:
                 json.dumps(payload, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            self._logger.warning("Saved comment surface debug dump to %s", debug_path)
+            self._logger.warning("Зберіг debug-дамп comment surface у %s.", debug_path)
         except Exception as error:
-            self._logger.warning("Unable to write comment surface debug dump: %s", error)
+            self._logger.warning("Не вдалося записати debug-дамп comment surface: %s", error)
 
     def _fill_comment_input(self, page: Page, input_locator: Locator, text: str) -> None:
         self._wait_for_verification_if_needed(page)
@@ -1156,7 +1275,7 @@ class TikTokPlaywrightClient:
                 input_locator.focus()
                 input_locator.fill(text)
             except (TimeoutError, Error) as error:
-                raise TikTokClientError(f"Unable to fill the comment input: {error}") from error
+                raise TikTokClientError(f"Не вдалося заповнити поле коментаря: {error}") from error
 
         self._wait_for_comment_post_button(page)
 
@@ -1207,11 +1326,11 @@ class TikTokPlaywrightClient:
             except (TimeoutError, Error) as error:
                 last_error = error
 
-            self._logger.debug("Unable to focus comment editor via %s.", description)
+            self._logger.debug("Не вдалося передати фокус полю коментаря через %s.", description)
 
         if last_error is not None:
-            raise TikTokClientError(f"Unable to focus the comment input: {last_error}") from last_error
-        raise TikTokClientError("Unable to focus the comment input.")
+            raise TikTokClientError(f"Не вдалося передати фокус полю коментаря: {last_error}") from last_error
+        raise TikTokClientError("Не вдалося передати фокус полю коментаря.")
 
     def _is_comment_editor_focused(self, input_locator: Locator) -> bool:
         try:
@@ -1239,6 +1358,92 @@ class TikTokPlaywrightClient:
                 return
 
             page.wait_for_timeout(200)
+
+    def _apply_account_reply_flag(self, comment: ScrapedComment) -> ScrapedComment:
+        username = self._active_account_username
+        has_account_reply = False
+        if username:
+            author_username = self._normalize_username(comment.author_username)
+            reply_usernames = {
+                normalized
+                for normalized in (
+                    self._normalize_username(item) for item in comment.reply_author_usernames
+                )
+                if normalized
+            }
+            has_account_reply = author_username == username or username in reply_usernames
+
+        eligible_account_names = () if has_account_reply else (self._account.name,)
+        return replace(
+            comment,
+            has_account_reply=has_account_reply,
+            eligible_account_names=eligible_account_names,
+        )
+
+    def _extract_reply_usernames_from_payload(self, payload: Any) -> tuple[str, ...]:
+        results: set[str] = set()
+        reply_keys = {
+            "reply_comment",
+            "reply_comments",
+            "replycomment",
+            "replycomments",
+            "reply_comment_list",
+            "replycommentlist",
+            "reply_list",
+            "replies",
+        }
+
+        def walk(node: Any, *, inside_reply: bool = False) -> None:
+            if isinstance(node, dict):
+                next_inside_reply = inside_reply
+                for key, value in node.items():
+                    normalized_key = key.lower()
+                    if normalized_key in reply_keys:
+                        next_inside_reply = True
+                        walk(value, inside_reply=True)
+                        continue
+
+                    if inside_reply and normalized_key in {"user", "user_info", "author"}:
+                        username = self._extract_username_from_user_payload(value)
+                        if username:
+                            results.add(username)
+
+                    walk(value, inside_reply=next_inside_reply)
+                return
+
+            if isinstance(node, list):
+                for item in node:
+                    walk(item, inside_reply=inside_reply)
+
+        walk(payload)
+        return tuple(sorted(results))
+
+    def _extract_username_from_user_payload(self, payload: Any) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+
+        username = self._first_non_empty(
+            payload.get("unique_id"),
+            payload.get("uniqueId"),
+            payload.get("username"),
+            payload.get("user_name"),
+        )
+        return self._normalize_username(username)
+
+    @staticmethod
+    def _extract_username_from_href(href: str | None) -> str | None:
+        value = href or ""
+        match = re.search(r"/@([^/?]+)", value)
+        if not match:
+            return None
+        return match.group(1).strip().lstrip("@").lower() or None
+
+    @staticmethod
+    def _normalize_username(value: Any) -> str | None:
+        if value in (None, ""):
+            return None
+        normalized = str(value).strip().lstrip("@").lower()
+        return normalized or None
 
     def _submit_comment(self, page: Page) -> None:
         self._wait_for_verification_if_needed(page)
@@ -1299,7 +1504,7 @@ class TikTokPlaywrightClient:
             payload.get("code"),
             response.status,
         )
-        return f"status={status_code}, message={message or 'ok'}"
+        return f"статус={status_code}, повідомлення={message or 'ok'}"
 
     @staticmethod
     def _first_non_empty(*values: Any) -> Any:

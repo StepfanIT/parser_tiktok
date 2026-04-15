@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from app.models import SendBehaviorConfig
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -12,6 +14,7 @@ class AppConfig:
     logs_dir: Path
     default_account_path: Path
     default_outgoing_comments_csv: Path
+    send_behavior: SendBehaviorConfig
     default_comment_delay_seconds: int = 9
     default_scrape_scroll_rounds: int = 8
     default_scroll_pause_seconds: float = 1.5
@@ -36,5 +39,15 @@ def load_app_config() -> AppConfig:
         logs_dir=logs_dir,
         default_account_path=accounts_dir / "main_account.json",
         default_outgoing_comments_csv=comments_dir / "outgoing_comments.csv",
+        send_behavior=SendBehaviorConfig(
+            daily_limit_min=60,
+            daily_limit_max=80,
+            hourly_limit_min=12,
+            hourly_limit_max=18,
+            batch_size_min=5,
+            batch_size_max=12,
+            batch_pause_min_seconds=180,
+            batch_pause_max_seconds=540,
+            comment_delay_choices=(3, 5, 7, 9, 11),
+        ),
     )
-

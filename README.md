@@ -1,58 +1,106 @@
 # TikTok Parser MVP
 
-Mini MVP on Python + Playwright with a terminal menu:
+## Структура
 
-1. Collect comments from a TikTok video into CSV.
-2. Send comments from CSV to a TikTok video.
-3. Exit the app and return later.
+- `main.py` - запуск CLI.
+- `app/cli.py` - меню та взаємодія з користувачем.
+- `app/services/comment_service.py` - сценарії збирання і надсилання.
+- `app/integrations/tiktok_client.py` - Playwright-інтеграція з TikTok.
+- `app/repositories/` - робота з JSON-конфігами акаунтів і CSV.
+- `data/accounts/` - конфіги акаунтів і профілі браузера.
+- `data/comments/outgoing_comments.csv` - приклад CSV для надсилання.
+- `exports/` - результати збирання.
+- `logs/app.log` - основний лог.
 
-## Project structure
+## Встановлення
 
-- `main.py` - CLI entry point.
-- `app/cli.py` - terminal menu and user flow.
-- `app/services/comment_service.py` - application layer for collect/send actions.
-- `app/integrations/tiktok_client.py` - Playwright automation for TikTok.
-- `app/repositories/` - filesystem-backed account and CSV repositories.
-- `data/accounts/main_account.json` - single account config for MVP.
-- `data/comments/outgoing_comments.csv` - sample outgoing comments file.
-- `logs/app.log` - runtime logs.
-- `exports/` - scraped comments output.
+python -m venv venv
+venv/Scripts/Activate.ps1
+pip install -r requirements.txt
 
-## Setup
+## Запуск
 
-1. Activate the virtual environment.
-2. Install dependencies:
+python main.py
 
-```powershell
-venv\Scripts\python.exe -m pip install -r requirements.txt
-venv\Scripts\python.exe -m playwright install chromium
-```
+## Конфіг акаунта
 
-3. Update `data/comments/outgoing_comments.csv` with the real TikTok video URL and the comments you want to send.
+Кожен акаунт - це окремий JSON у `data/accounts/`.
 
-## Account file
+Поля:
 
-`data/accounts/main_account.json` keeps browser settings and the path to the saved TikTok session:
+- `name` - внутрішня назва акаунта.
+- `storage_state_path` - резервний storage state.
+- `user_data_dir` - постійний профіль браузера для цього акаунта.
+- `tiktok_username` - бажано вказати TikTok username без `@`, щоб точніше відсікати коментарі, де акаунт уже відповів.
+- `browser_type` - зазвичай `chromium`.
+- `browser_channel` - можна лишити `null`.
+- `headless` - краще `false`.
+- `slow_mo_ms` - невелика затримка для стабільності.
+- `login_url` - сторінка логіну.
+- `bootstrap_login_if_missing` - дозволяє вручну дологінитись у вже відкритому профілі.
 
-- `storage_state_path` - backup of Playwright login state.
-- `user_data_dir` - persistent Chromium profile directory used across runs.
-- `browser_type` - default `chromium`.
-- `browser_channel` - optional Chrome channel if you want to use local Chrome instead of the bundled browser.
-- `headless` - `false` by default because TikTok automation is easier to debug in headed mode.
-- `bootstrap_login_if_missing` - when `true`, the app opens TikTok login in the persistent profile and lets you refresh the session manually.
+## Режим з кількома акаунтами
 
-On the first "Send comments" run, the app opens TikTok in `user_data_dir`, waits for you to finish authentication once, and then reuses the same browser profile on later runs. `storage_state_path` is still saved as a backup snapshot.
+У меню для збирання або надсилання програма питає:
 
-## Running
+1. Працювати з одного акаунта чи з кількох.
+2. Скільки акаунтів використати.
+3. Які саме JSON-конфіги взяти.
 
-```powershell
-venv\Scripts\python.exe main.py
-```
+Після цього кожен акаунт активується по черзі. Якщо десь потрібен логін або puzzle, його треба пройти у відкритому браузері. Лише після активації всіх вибраних акаунтів починається основна робота.
 
-## Notes
+## CSV для надсилання
 
-- The scraper first tries to capture TikTok comment API responses and falls back to DOM parsing if needed.
-- The scraper now opens the comments panel before scrolling. If zero comments are collected, the app raises an error instead of writing an empty CSV with only headers.
-- Posting comments relies on TikTok's current web selectors and may need small selector updates if TikTok changes the UI.
-- If TikTok shows a verification puzzle, solve it in the opened browser window and then press Enter in the terminal to continue.
-- The code is structured in separate layers so later you can add a proper backend, multiple accounts, queues, APIs, retries, or scheduling without rewriting the MVP from scratch.
+Обов'язкові колонки:
+
+- `video_url`
+- `comment_text`
+
+Необов'язкові:
+
+- `order`
+- `delay_seconds`
+- `account_name`
+- `allowed_accounts`
+- `eligible_accounts`
+
+`account_name` - швидкий спосіб прив'язати рядок до одного акаунта.
+
+`allowed_accounts` або `eligible_accounts` - список назв акаунтів через `|` або кому, яким дозволено надсилати цей коментар.
+
+## CSV після збирання
+
+Кожен запуск створює новий файл у `exports/`, наприклад:
+
+- `scraped_comments_20260415_101530.csv`
+
+У CSV є колонка `eligible_accounts` - це акаунти, які ще не відповіли на цей коментар і можуть працювати з ним далі.
+
+## Що означає прокрутка 1/2/3 під час збирання
+
+Це не номер коментаря. Це номер проходу прокрутки секції коментарів.
+
+Приклад:
+
+- `Прокрутка коментарів 1/8` - перша спроба підвантажити наступну порцію.
+- `Прокрутка коментарів 2/8` - друга спроба.
+
+Чим більше таких проходів, тим більше шансів, що TikTok догрузить нижчі коментарі в DOM або через мережеві запити.
+
+## Ліміти надсилання
+
+За замовчуванням зараз закладено безпечний режим для не нових акаунтів:
+
+- приблизно `60-80` коментарів на день на акаунт
+- приблизно `12-18` коментарів на годину на акаунт
+- пачки по `5-12` коментарів
+- пауза між пачками `180-540` секунд
+- пауза між окремими коментарями випадкова з набору `3, 5, 7, 9, 11`
+
+Якщо акаунти стабільно живуть без перевірок і реджектів, ці межі можна буде підняти окремо.
+
+## Нотатки
+
+- Якщо TikTok показує puzzle або verification, його треба пройти вручну в браузері.
+- Якщо TikTok змінить DOM або селектори, може знадобитись невелике оновлення `app/integrations/tiktok_client.py`.
+- Якщо `tiktok_username` не вказаний, програма пробує визначити його сама, але для точного фільтра краще прописати вручну.

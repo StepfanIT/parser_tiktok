@@ -2,6 +2,7 @@
   "name": "main",
   "storage_state_path": "data/accounts/main_storage_state.json",
   "user_data_dir": "data/accounts/main_user_data",
+  "tiktok_username": null,
   "browser_type": "chromium",
   "browser_channel": null,
   "headless": false,
