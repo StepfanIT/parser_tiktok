@@ -51,6 +51,9 @@ class TikTokCommentService:
     def list_available_account_paths(self) -> list[Path]:
         return self._account_repository.list_account_paths()
 
+    def resolve_account_identifier(self, identifier: str) -> Path | None:
+        return self._account_repository.resolve_account_identifier(identifier)
+
     def suggest_account_name(self, slot_index: int) -> str:
         return self._account_repository.suggest_account_name(slot_index)
 

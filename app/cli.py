@@ -370,15 +370,26 @@ class TikTokCli:
             )
             return self._create_account_config_interactively(slot_index, preset=creation_preset)
 
-        raw_value = input(
-            f"Account #{slot_index} config [{default_path}] "
-            f"(Enter = use, NEW = create another): "
-        ).strip()
-        if not raw_value:
-            return default_path
-        if raw_value.lower() in {"new", "create", "+"}:
-            return self._create_account_config_interactively(slot_index, preset=creation_preset)
-        return Path(raw_value)
+        while True:
+            raw_value = input(
+                f"Account #{slot_index} config [{default_path}] "
+                f"(Enter = use, NEW = create another): "
+            ).strip()
+            if not raw_value:
+                return default_path
+            if raw_value.lower() in {"new", "create", "+"}:
+                return self._create_account_config_interactively(slot_index, preset=creation_preset)
+
+            resolved_path = self._service.resolve_account_identifier(raw_value)
+            if resolved_path is not None:
+                return resolved_path
+
+            print(
+                self._paint(
+                    "Account config was not found. Enter a valid path, account name, folder alias, or NEW.",
+                    YELLOW,
+                )
+            )
 
     def _create_account_config_interactively(
         self,
