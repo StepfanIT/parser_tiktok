@@ -12,6 +12,7 @@ from app.integrations.tiktok_client import (
     TikTokLoginRequiredError,
     TikTokVerificationRequiredError,
 )
+from app.models import AccountHealthCheckResult
 from app.services.comment_service import TikTokCommentService
 
 RESET = "\033[0m"
@@ -23,6 +24,10 @@ RED = "\033[38;5;203m"
 CYAN = "\033[38;5;81m"
 MAGENTA = "\033[38;5;177m"
 TEAL = "\033[38;5;44m"
+
+
+class MenuBackRequested(Exception):
+    pass
 
 
 class TikTokCli:
@@ -80,6 +85,8 @@ class TikTokCli:
                 output_path=output_path,
             )
             print(self._paint(f"Comments saved to: {exported_path}", GREEN))
+        except MenuBackRequested:
+            print(self._paint("Returning to the main menu.", YELLOW))
         except (FileNotFoundError, ValueError, TikTokClientError) as error:
             self._logger.exception("Comment collection failed.")
             print(self._paint(f"Could not collect comments: {error}", RED))
@@ -111,6 +118,8 @@ class TikTokCli:
                     f"[{status}] {result.account_name} | "
                     f"#{result.outgoing_comment.order}: {result.details}"
                 )
+        except MenuBackRequested:
+            print(self._paint("Returning to the main menu.", YELLOW))
         except TikTokVerificationRequiredError as error:
             self._logger.exception("TikTok requires manual verification.")
             print(self._paint(f"TikTok verification is required in the browser: {error}", YELLOW))
@@ -139,6 +148,8 @@ class TikTokCli:
                 status = "OK" if result.success else "FAIL"
                 print(f"[{status}] {result.account_name} | {result.provider_name} | {result.details}")
             print(self._paint(f"Report saved to: {report_path}", GREEN))
+        except MenuBackRequested:
+            print(self._paint("Returning to the main menu.", YELLOW))
         except (FileNotFoundError, ValueError, TikTokClientError) as error:
             self._logger.exception("Health check failed.")
             print(self._paint(f"Health check error: {error}", RED))
@@ -208,13 +219,16 @@ class TikTokCli:
 
     def _prompt_path(self, prompt: str, default: Path) -> Path:
         raw_value = input(f"{prompt} [{default}]: ").strip()
+        self._raise_if_back_requested(raw_value)
         return Path(raw_value) if raw_value else default
 
     def _prompt_collect_mode(self) -> str:
         print("Collection mode:")
         print("1. All selected accounts on one video")
         print("2. Each selected account on each listed video")
-        mode = input("Select mode [1-2]: ").strip() or "1"
+        print("0. Back to main menu")
+        mode = input("Select mode [0-2]: ").strip() or "1"
+        self._raise_if_back_requested(mode)
         if mode not in {"1", "2"}:
             print(self._paint("Unknown mode. Falling back to one video mode.", YELLOW))
             return "1"
@@ -222,6 +236,7 @@ class TikTokCli:
 
     def _prompt_required_video_url(self) -> str:
         video_url = input("TikTok video URL: ").strip()
+        self._raise_if_back_requested(video_url)
         if video_url:
             return video_url
         raise ValueError("Video URL is required.")
@@ -232,12 +247,14 @@ class TikTokCli:
         chunks: list[str] = []
         while True:
             raw_value = input("Video URL(s): ").strip()
+            self._raise_if_back_requested(raw_value)
             if not raw_value:
                 break
             chunks.append(raw_value)
 
         if not chunks:
             fallback = input("TikTok video URL: ").strip()
+            self._raise_if_back_requested(fallback)
             return [fallback] if fallback else []
 
         merged = ",".join(chunks).replace("\n", ",")
@@ -263,6 +280,7 @@ class TikTokCli:
     ) -> Path | None:
         suffix = f" [{default}]" if default is not None else f" ({empty_hint})"
         raw_value = input(f"{prompt}{suffix}: ").strip()
+        self._raise_if_back_requested(raw_value)
         if not raw_value:
             return default
         return Path(raw_value)
@@ -281,7 +299,9 @@ class TikTokCli:
         print(f"Account mode for {action_label}:")
         print("1. Single account")
         print("2. Multiple accounts")
-        mode = input("Select mode [1-2]: ").strip() or "1"
+        print("0. Back to main menu")
+        mode = input("Select mode [0-2]: ").strip() or "1"
+        self._raise_if_back_requested(mode)
 
         if mode == "1":
             default = available_paths[0] if available_paths else None
@@ -324,8 +344,13 @@ class TikTokCli:
             path_key = str(selected_path).lower()
             if path_key in prepared_paths:
                 continue
-            self._ensure_account_session_for_slot(slot_index=index, account_path=selected_path)
+            result = self._ensure_account_session_for_slot(slot_index=index, account_path=selected_path)
             prepared_paths.add(path_key)
+            if index < len(selected_paths):
+                self._prompt_continue_after_account_setup(
+                    slot_index=index,
+                    provider_name=result.provider_name,
+                )
 
         unique_paths: list[Path] = []
         seen: set[str] = set()
@@ -346,6 +371,7 @@ class TikTokCli:
     @staticmethod
     def _prompt_positive_int(prompt: str, *, default: int) -> int:
         raw_value = input(f"{prompt} [{default}]: ").strip()
+        TikTokCli._raise_if_back_requested(raw_value)
         if not raw_value:
             return default
 
@@ -375,6 +401,7 @@ class TikTokCli:
                 f"Account #{slot_index} config [{default_path}] "
                 f"(Enter = use, NEW = create another): "
             ).strip()
+            self._raise_if_back_requested(raw_value)
             if not raw_value:
                 return default_path
             if raw_value.lower() in {"new", "create", "+"}:
@@ -400,7 +427,9 @@ class TikTokCli:
         print()
         print(self._paint(f"Create account #{slot_index}", CYAN, bold=True))
         suggested_name = self._service.suggest_account_name(slot_index)
-        account_name = input(f"Account name [{suggested_name}]: ").strip() or suggested_name
+        account_name_input = input(f"Account name [{suggested_name}]: ").strip()
+        self._raise_if_back_requested(account_name_input)
+        account_name = account_name_input or suggested_name
 
         provider_name, api_url, api_token, api_key = self._resolve_account_provider_settings(preset=preset)
         profile_id: str | None = None
@@ -462,7 +491,10 @@ class TikTokCli:
         if not has_saved:
             print(self._paint("No saved accounts found. Switching to manual slot setup.", YELLOW))
             return "2"
-        return input("Select source [1-2]: ").strip() or "1"
+        print("0. Back to main menu")
+        source_choice = input("Select source [0-2]: ").strip() or "1"
+        self._raise_if_back_requested(source_choice)
+        return source_choice
 
     def _resolve_account_provider_settings(
         self,
@@ -492,7 +524,12 @@ class TikTokCli:
         api_token, api_key = self._prompt_provider_secret(provider_name)
         return provider_name, api_url, api_token, api_key
 
-    def _ensure_account_session_for_slot(self, *, slot_index: int, account_path: Path) -> None:
+    def _ensure_account_session_for_slot(
+        self,
+        *,
+        slot_index: int,
+        account_path: Path,
+    ) -> AccountHealthCheckResult:
         print(
             self._paint(
                 f"Preparing account #{slot_index}: {account_path}",
@@ -510,6 +547,18 @@ class TikTokCli:
                 GREEN,
             )
         )
+        return result
+
+    def _prompt_continue_after_account_setup(self, *, slot_index: int, provider_name: str) -> None:
+        print(
+            self._paint(
+                f"Account #{slot_index} ({provider_name}) is ready. "
+                "Press Enter to continue to the next account, or type 0/back to return to the main menu.",
+                CYAN,
+            )
+        )
+        raw_value = input("Continue: ").strip()
+        self._raise_if_back_requested(raw_value)
 
     def _prompt_provider_name(self) -> str:
         print("Anti-detect provider:")
@@ -578,6 +627,7 @@ class TikTokCli:
     @staticmethod
     def _prompt_required_text(prompt: str) -> str:
         raw_value = input(f"{prompt}: ").strip()
+        TikTokCli._raise_if_back_requested(raw_value)
         if raw_value:
             return raw_value
         raise ValueError(f"{prompt} is required.")
@@ -599,3 +649,8 @@ class TikTokCli:
         if os.getenv("NO_COLOR"):
             return False
         return bool(getattr(sys.stdout, "isatty", lambda: False)())
+
+    @staticmethod
+    def _raise_if_back_requested(raw_value: str) -> None:
+        if str(raw_value or "").strip().lower() in {"0", "back", "menu", "exit"}:
+            raise MenuBackRequested
