@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,8 @@ GREEN = "\033[38;5;120m"
 YELLOW = "\033[38;5;221m"
 RED = "\033[38;5;203m"
 CYAN = "\033[38;5;81m"
+MAGENTA = "\033[38;5;177m"
+TEAL = "\033[38;5;44m"
 
 
 class TikTokCli:
@@ -32,6 +35,7 @@ class TikTokCli:
         self._config = config
         self._logger = logger
         self._service = service
+        self._use_colors = self._detect_color_support()
 
     def run(self) -> None:
         self._print_startup_banner()
@@ -147,18 +151,38 @@ class TikTokCli:
         print(self._paint("=" * 60, CYAN))
         print(self._paint("TikTok Parser Console", CYAN, bold=True))
         print(self._paint("=" * 60, CYAN))
-        print("1. Collect comments")
-        print("2. Send comments")
-        print("3. Account health check")
-        print("4. Exit")
+        print(self._paint("1. Collect comments", BLUE, bold=True))
+        print(self._paint("2. Send comments", GREEN, bold=True))
+        print(self._paint("3. Account health check", MAGENTA, bold=True))
+        print(self._paint("4. Exit", RED, bold=True))
         print()
-        print(f"Default account config: {self._config.default_account_path}")
-        print(f"Outgoing CSV:          {self._config.default_outgoing_comments_csv}")
-        print(f"Logs:                  {self._config.logs_dir / 'app.log'}")
+        print(self._paint(f"Default account config: {self._config.default_account_path}", TEAL))
+        print(self._paint(f"Outgoing CSV:          {self._config.default_outgoing_comments_csv}", TEAL))
+        print(self._paint(f"Logs:                  {self._config.logs_dir / 'app.log'}", TEAL))
         print(self._paint("=" * 60, CYAN))
 
-    @staticmethod
-    def _print_startup_banner() -> None:
+    def _print_startup_banner(self) -> None:
+        if not self._use_colors:
+            print(
+                r"""
+  _______ _ _    _______     _
+ |__   __(_) |  |__   __|   | |
+    | |   _| | __  | | ___  | | __
+    | |  | | |/ /  | |/ _ \ | |/ /
+    | |  | |   <   | | (_) ||   <
+    |_|  |_|_|\_\  |_|\___(_)_|\_\
+
+             __
+            / /_
+       ____/ __/
+      / __  /_
+      \__,_/\__|
+            TikTok
+             🎵
+            """
+            )
+            return
+
         print(
             fr"""{CYAN}{BOLD}
   _______ _ _    _______     _
@@ -174,6 +198,7 @@ class TikTokCli:
       / __  /_
       \__,_/\__|
             TikTok
+             🎵
             {RESET}"""
         )
 
@@ -225,8 +250,20 @@ class TikTokCli:
         )
         preset = self._prompt_multi_account_creation_preset()
         selected_paths: list[Path] = []
+        use_saved_choice = self._prompt_multi_account_source_choice(has_saved=bool(available_paths))
+        if use_saved_choice == "1":
+            selected_paths.extend(available_paths[:count])
+            if len(selected_paths) < count:
+                print(
+                    self._paint(
+                        "Not enough saved accounts. Missing slots will be created or chosen manually.",
+                        YELLOW,
+                    )
+                )
+
+        preset = self._prompt_multi_account_creation_preset() if len(selected_paths) < count else None
         prepared_paths: set[str] = set()
-        for index in range(count):
+        for index in range(len(selected_paths), count):
             default = available_paths[index] if index < len(available_paths) else None
             selected_path = self._prompt_account_slot(
                 slot_index=index + 1,
@@ -234,10 +271,12 @@ class TikTokCli:
                 creation_preset=preset,
             )
             selected_paths.append(selected_path)
+
+        for index, selected_path in enumerate(selected_paths, start=1):
             path_key = str(selected_path).lower()
             if path_key in prepared_paths:
                 continue
-            self._ensure_account_session_for_slot(slot_index=index + 1, account_path=selected_path)
+            self._ensure_account_session_for_slot(slot_index=index, account_path=selected_path)
             prepared_paths.add(path_key)
 
         unique_paths: list[Path] = []
@@ -355,6 +394,16 @@ class TikTokCli:
             "api_token": None,
             "api_key": None,
         }
+
+    def _prompt_multi_account_source_choice(self, *, has_saved: bool) -> str:
+        print()
+        print("Source for multi-account slots:")
+        print("1. Use saved accounts first (auto-login/session check)")
+        print("2. Choose/create each slot manually")
+        if not has_saved:
+            print(self._paint("No saved accounts found. Switching to manual slot setup.", YELLOW))
+            return "2"
+        return input("Select source [1-2]: ").strip() or "1"
 
     def _resolve_account_provider_settings(
         self,
@@ -477,10 +526,17 @@ class TikTokCli:
     @staticmethod
     def _print_section(title: str) -> None:
         print()
-        print(f"{CYAN}{BOLD}{title}{RESET}")
+        print(f"{MAGENTA}{BOLD}{title}{RESET}")
         print(f"{CYAN}{'-' * max(len(title), 16)}{RESET}")
 
-    @staticmethod
-    def _paint(value: str, color: str, *, bold: bool = False) -> str:
+    def _paint(self, value: str, color: str, *, bold: bool = False) -> str:
+        if not self._use_colors:
+            return value
         prefix = f"{BOLD}{color}" if bold else color
         return f"{prefix}{value}{RESET}"
+
+    @staticmethod
+    def _detect_color_support() -> bool:
+        if os.getenv("NO_COLOR"):
+            return False
+        return bool(getattr(sys.stdout, "isatty", lambda: False)())

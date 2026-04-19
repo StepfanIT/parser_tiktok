@@ -171,6 +171,7 @@ class TikTokCommentService:
         if not pending_comments:
             raise ValueError("The outgoing CSV does not contain any comments.")
 
+        pending_comments = self._normalize_comment_account_restrictions(pending_comments, accounts)
         self._validate_comment_account_restrictions(pending_comments, accounts)
         rng = random.Random()
         pending_pool = pending_comments.copy()
@@ -299,6 +300,44 @@ class TikTokCommentService:
                 f"Comment #{comment.order} requires one of these accounts: {allowed}, "
                 "but none of them were selected for this run."
             )
+
+    def _normalize_comment_account_restrictions(
+        self,
+        comments: list[OutgoingComment],
+        accounts: list[TikTokAccountConfig],
+    ) -> list[OutgoingComment]:
+        alias_to_account_name: dict[str, str] = {}
+        for account in accounts:
+            canonical = account.name.strip()
+            if not canonical:
+                continue
+            alias_to_account_name[canonical.lower()] = canonical
+            if account.tiktok_username:
+                username = account.tiktok_username.strip().lstrip("@").lower()
+                if username:
+                    alias_to_account_name[username] = canonical
+                    alias_to_account_name[f"@{username}"] = canonical
+
+        normalized_comments: list[OutgoingComment] = []
+        for comment in comments:
+            if not comment.allowed_account_names:
+                normalized_comments.append(comment)
+                continue
+
+            resolved_names: list[str] = []
+            for raw_name in comment.allowed_account_names:
+                normalized_key = raw_name.strip().lower()
+                normalized_key = normalized_key or raw_name
+                canonical = alias_to_account_name.get(normalized_key)
+                if canonical is None:
+                    canonical = alias_to_account_name.get(normalized_key.lstrip("@"))
+                resolved_names.append(canonical or raw_name)
+
+            deduped_names = tuple(dict.fromkeys(name for name in resolved_names if str(name).strip()))
+            normalized_comments.append(
+                replace(comment, allowed_account_names=deduped_names)
+            )
+        return normalized_comments
 
     def _ensure_any_healthy_accounts(self, accounts: list[TikTokAccountConfig]) -> None:
         if accounts:
