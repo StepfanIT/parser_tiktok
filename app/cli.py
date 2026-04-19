@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
+from typing import Any
 
 from app.config import AppConfig
 from app.integrations.tiktok_client import (
@@ -19,6 +21,8 @@ GREEN = "\033[38;5;120m"
 YELLOW = "\033[38;5;221m"
 RED = "\033[38;5;203m"
 CYAN = "\033[38;5;81m"
+MAGENTA = "\033[38;5;177m"
+TEAL = "\033[38;5;44m"
 
 
 class TikTokCli:
@@ -31,6 +35,7 @@ class TikTokCli:
         self._config = config
         self._logger = logger
         self._service = service
+        self._use_colors = self._detect_color_support()
 
     def run(self) -> None:
         self._print_startup_banner()
@@ -52,21 +57,25 @@ class TikTokCli:
 
     def _handle_collect_comments(self) -> None:
         self._print_section("Collect Comments")
-        video_url = input("TikTok video URL: ").strip()
-        if not video_url:
-            print(self._paint("Video URL is required.", RED))
-            self._pause()
-            return
-
         try:
+            collect_mode = self._prompt_collect_mode()
+            if collect_mode == "1":
+                video_urls = [self._prompt_required_video_url()]
+            else:
+                video_urls = self._prompt_video_urls_for_multi_collect()
+                if not video_urls:
+                    print(self._paint("At least one video URL is required.", RED))
+                    self._pause()
+                    return
+
             output_path = self._prompt_optional_path(
                 prompt="Export CSV path",
                 default=None,
                 empty_hint="Press Enter to create a fresh file in exports",
             )
             account_paths = self._prompt_account_paths(action_label="collection")
-            exported_path = self._service.collect_comments(
-                video_url,
+            exported_path = self._service.collect_comments_for_videos(
+                video_urls=video_urls,
                 account_paths=account_paths,
                 output_path=output_path,
             )
@@ -146,18 +155,38 @@ class TikTokCli:
         print(self._paint("=" * 60, CYAN))
         print(self._paint("TikTok Parser Console", CYAN, bold=True))
         print(self._paint("=" * 60, CYAN))
-        print("1. Collect comments")
-        print("2. Send comments")
-        print("3. Account health check")
-        print("4. Exit")
+        print(self._paint("1. Collect comments", BLUE, bold=True))
+        print(self._paint("2. Send comments", GREEN, bold=True))
+        print(self._paint("3. Account health check", MAGENTA, bold=True))
+        print(self._paint("4. Exit", RED, bold=True))
         print()
-        print(f"Default account config: {self._config.default_account_path}")
-        print(f"Outgoing CSV:          {self._config.default_outgoing_comments_csv}")
-        print(f"Logs:                  {self._config.logs_dir / 'app.log'}")
+        print(self._paint(f"Default account config: {self._config.default_account_path}", TEAL))
+        print(self._paint(f"Outgoing CSV:          {self._config.default_outgoing_comments_csv}", TEAL))
+        print(self._paint(f"Logs:                  {self._config.logs_dir / 'app.log'}", TEAL))
         print(self._paint("=" * 60, CYAN))
 
-    @staticmethod
-    def _print_startup_banner() -> None:
+    def _print_startup_banner(self) -> None:
+        if not self._use_colors:
+            print(
+                r"""
+  _______ _ _    _______     _
+ |__   __(_) |  |__   __|   | |
+    | |   _| | __  | | ___  | | __
+    | |  | | |/ /  | |/ _ \ | |/ /
+    | |  | |   <   | | (_) ||   <
+    |_|  |_|_|\_\  |_|\___(_)_|\_\
+
+             __
+            / /_
+       ____/ __/
+      / __  /_
+      \__,_/\__|
+            TikTok
+             🎵
+            """
+            )
+            return
+
         print(
             fr"""{CYAN}{BOLD}
   _______ _ _    _______     _
@@ -173,12 +202,57 @@ class TikTokCli:
       / __  /_
       \__,_/\__|
             TikTok
+             🎵
             {RESET}"""
         )
 
     def _prompt_path(self, prompt: str, default: Path) -> Path:
         raw_value = input(f"{prompt} [{default}]: ").strip()
         return Path(raw_value) if raw_value else default
+
+    def _prompt_collect_mode(self) -> str:
+        print("Collection mode:")
+        print("1. All selected accounts on one video")
+        print("2. Each selected account on each listed video")
+        mode = input("Select mode [1-2]: ").strip() or "1"
+        if mode not in {"1", "2"}:
+            print(self._paint("Unknown mode. Falling back to one video mode.", YELLOW))
+            return "1"
+        return mode
+
+    def _prompt_required_video_url(self) -> str:
+        video_url = input("TikTok video URL: ").strip()
+        if video_url:
+            return video_url
+        raise ValueError("Video URL is required.")
+
+    def _prompt_video_urls_for_multi_collect(self) -> list[str]:
+        print("Paste video URLs (comma-separated or one per line).")
+        print("Submit an empty line to finish.")
+        chunks: list[str] = []
+        while True:
+            raw_value = input("Video URL(s): ").strip()
+            if not raw_value:
+                break
+            chunks.append(raw_value)
+
+        if not chunks:
+            fallback = input("TikTok video URL: ").strip()
+            return [fallback] if fallback else []
+
+        merged = ",".join(chunks).replace("\n", ",")
+        values = [item.strip() for item in merged.split(",")]
+        unique_urls: list[str] = []
+        seen: set[str] = set()
+        for url in values:
+            if not url:
+                continue
+            key = url.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_urls.append(url)
+        return unique_urls
 
     def _prompt_optional_path(
         self,
@@ -223,14 +297,34 @@ class TikTokCli:
             default=max(2, min(max(len(available_paths), 2), 3)),
         )
         selected_paths: list[Path] = []
-        for index in range(count):
-            default = available_paths[index] if index < len(available_paths) else None
-            selected_paths.append(
-                self._prompt_account_slot(
-                    slot_index=index + 1,
-                    default_path=default,
+        use_saved_choice = self._prompt_multi_account_source_choice(has_saved=bool(available_paths))
+        if use_saved_choice == "1":
+            selected_paths.extend(available_paths[:count])
+            if len(selected_paths) < count:
+                print(
+                    self._paint(
+                        "Not enough saved accounts. Missing slots will be created or chosen manually.",
+                        YELLOW,
+                    )
                 )
+
+        preset = self._prompt_multi_account_creation_preset() if len(selected_paths) < count else None
+        prepared_paths: set[str] = set()
+        for index in range(len(selected_paths), count):
+            default = available_paths[index] if index < len(available_paths) else None
+            selected_path = self._prompt_account_slot(
+                slot_index=index + 1,
+                default_path=default,
+                creation_preset=preset,
             )
+            selected_paths.append(selected_path)
+
+        for index, selected_path in enumerate(selected_paths, start=1):
+            path_key = str(selected_path).lower()
+            if path_key in prepared_paths:
+                continue
+            self._ensure_account_session_for_slot(slot_index=index, account_path=selected_path)
+            prepared_paths.add(path_key)
 
         unique_paths: list[Path] = []
         seen: set[str] = set()
@@ -264,6 +358,7 @@ class TikTokCli:
         *,
         slot_index: int,
         default_path: Path | None,
+        creation_preset: dict[str, Any] | None = None,
     ) -> Path:
         if default_path is None:
             print(
@@ -272,42 +367,44 @@ class TikTokCli:
                     YELLOW,
                 )
             )
-            return self._create_account_config_interactively(slot_index)
+            return self._create_account_config_interactively(slot_index, preset=creation_preset)
 
-        raw_value = input(
-            f"Account #{slot_index} config [{default_path}] "
-            f"(Enter = use, NEW = create another): "
-        ).strip()
-        if not raw_value:
-            return default_path
-        if raw_value.lower() in {"new", "create", "+"}:
-            return self._create_account_config_interactively(slot_index)
-        return Path(raw_value)
+        while True:
+            raw_value = input(
+                f"Account #{slot_index} config [{default_path}] "
+                f"(Enter = use, NEW = create another): "
+            ).strip()
+            if not raw_value:
+                return default_path
+            if raw_value.lower() in {"new", "create", "+"}:
+                return self._create_account_config_interactively(slot_index, preset=creation_preset)
 
-    def _create_account_config_interactively(self, slot_index: int) -> Path:
+            resolved_path = self._service.resolve_account_identifier(raw_value)
+            if resolved_path is not None:
+                return resolved_path
+
+            print(
+                self._paint(
+                    "Account config was not found. Enter a valid path, account name, folder alias, or NEW.",
+                    YELLOW,
+                )
+            )
+
+    def _create_account_config_interactively(
+        self,
+        slot_index: int,
+        *,
+        preset: dict[str, Any] | None = None,
+    ) -> Path:
         print()
         print(self._paint(f"Create account #{slot_index}", CYAN, bold=True))
         suggested_name = self._service.suggest_account_name(slot_index)
         account_name = input(f"Account name [{suggested_name}]: ").strip() or suggested_name
 
-        print("Account type:")
-        print("1. Simple account")
-        print("2. Anti-detect account")
-        account_type = input("Select type [1-2]: ").strip() or "1"
-
-        provider_name = "playwright_local"
+        provider_name, api_url, api_token, api_key = self._resolve_account_provider_settings(preset=preset)
         profile_id: str | None = None
-        api_url: str | None = None
-        api_token: str | None = None
-        api_key: str | None = None
-
-        if account_type == "2":
-            provider_name = self._prompt_provider_name()
+        if provider_name != "playwright_local":
             profile_id = self._prompt_required_text("Profile ID")
-            api_url = self._prompt_provider_api_url(provider_name)
-            api_token, api_key = self._prompt_provider_secret(provider_name)
-        elif account_type != "1":
-            print(self._paint("Unknown type. Falling back to a simple account.", YELLOW))
 
         config_path = self._service.create_account_config(
             account_name=account_name,
@@ -320,6 +417,98 @@ class TikTokCli:
         print(self._paint(f"Created config: {config_path}", GREEN))
         self._print_provider_secret_hint(provider_name, config_path, api_token=api_token, api_key=api_key)
         return config_path
+
+    def _prompt_multi_account_creation_preset(self) -> dict[str, Any]:
+        print()
+        print("Default setup for NEW accounts in this multi-account batch:")
+        print("1. Local browser (Playwright)")
+        print("2. Dolphin anti-detect")
+        print("3. AdsPower anti-detect")
+        preset_choice = input("Select preset [1-3]: ").strip() or "1"
+
+        if preset_choice == "2":
+            api_url = self._prompt_provider_api_url("dolphin_anty")
+            api_token, _ = self._prompt_provider_secret("dolphin_anty")
+            return {
+                "provider_name": "dolphin_anty",
+                "api_url": api_url,
+                "api_token": api_token,
+                "api_key": None,
+            }
+
+        if preset_choice == "3":
+            api_url = self._prompt_provider_api_url("adspower")
+            _, api_key = self._prompt_provider_secret("adspower")
+            return {
+                "provider_name": "adspower",
+                "api_url": api_url,
+                "api_token": None,
+                "api_key": api_key,
+            }
+
+        return {
+            "provider_name": "playwright_local",
+            "api_url": None,
+            "api_token": None,
+            "api_key": None,
+        }
+
+    def _prompt_multi_account_source_choice(self, *, has_saved: bool) -> str:
+        print()
+        print("Source for multi-account slots:")
+        print("1. Use saved accounts first (auto-login/session check)")
+        print("2. Choose/create each slot manually")
+        if not has_saved:
+            print(self._paint("No saved accounts found. Switching to manual slot setup.", YELLOW))
+            return "2"
+        return input("Select source [1-2]: ").strip() or "1"
+
+    def _resolve_account_provider_settings(
+        self,
+        *,
+        preset: dict[str, Any] | None,
+    ) -> tuple[str, str | None, str | None, str | None]:
+        if preset is not None:
+            provider_name = str(preset.get("provider_name") or "playwright_local")
+            return (
+                provider_name,
+                preset.get("api_url"),
+                preset.get("api_token"),
+                preset.get("api_key"),
+            )
+
+        print("Account type:")
+        print("1. Simple account")
+        print("2. Anti-detect account")
+        account_type = input("Select type [1-2]: ").strip() or "1"
+        if account_type != "2":
+            if account_type != "1":
+                print(self._paint("Unknown type. Falling back to a simple account.", YELLOW))
+            return "playwright_local", None, None, None
+
+        provider_name = self._prompt_provider_name()
+        api_url = self._prompt_provider_api_url(provider_name)
+        api_token, api_key = self._prompt_provider_secret(provider_name)
+        return provider_name, api_url, api_token, api_key
+
+    def _ensure_account_session_for_slot(self, *, slot_index: int, account_path: Path) -> None:
+        print(
+            self._paint(
+                f"Preparing account #{slot_index}: {account_path}",
+                BLUE,
+            )
+        )
+        result = self._service.ensure_account_session(account_path=account_path)
+        if not result.success:
+            raise TikTokClientError(
+                f"Account #{slot_index} is not ready: {result.details}"
+            )
+        print(
+            self._paint(
+                f"Account #{slot_index} is ready ({result.provider_name}).",
+                GREEN,
+            )
+        )
 
     def _prompt_provider_name(self) -> str:
         print("Anti-detect provider:")
@@ -395,10 +584,17 @@ class TikTokCli:
     @staticmethod
     def _print_section(title: str) -> None:
         print()
-        print(f"{CYAN}{BOLD}{title}{RESET}")
+        print(f"{MAGENTA}{BOLD}{title}{RESET}")
         print(f"{CYAN}{'-' * max(len(title), 16)}{RESET}")
 
-    @staticmethod
-    def _paint(value: str, color: str, *, bold: bool = False) -> str:
+    def _paint(self, value: str, color: str, *, bold: bool = False) -> str:
+        if not self._use_colors:
+            return value
         prefix = f"{BOLD}{color}" if bold else color
         return f"{prefix}{value}{RESET}"
+
+    @staticmethod
+    def _detect_color_support() -> bool:
+        if os.getenv("NO_COLOR"):
+            return False
+        return bool(getattr(sys.stdout, "isatty", lambda: False)())
