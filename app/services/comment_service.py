@@ -100,40 +100,62 @@ class TikTokCommentService:
         account_paths: list[Path] | None = None,
         output_path: Path | None = None,
     ) -> Path:
+        return self.collect_comments_for_videos(
+            video_urls=[video_url],
+            account_paths=account_paths,
+            output_path=output_path,
+        )
+
+    def collect_comments_for_videos(
+        self,
+        *,
+        video_urls: list[str],
+        account_paths: list[Path] | None = None,
+        output_path: Path | None = None,
+    ) -> Path:
+        normalized_urls = [url.strip() for url in video_urls if str(url).strip()]
+        if not normalized_urls:
+            raise ValueError("At least one TikTok video URL is required for comment collection.")
+
         accounts, health_results = self._health_service.check_accounts(account_paths)
         summaries = self._build_run_summaries(health_results)
         self._ensure_any_healthy_accounts(accounts)
         self._logger.info("All selected accounts are ready. Starting comment collection.")
         merged_comments: dict[str, ScrapedComment] = {}
-        report_notes = [f"Collection target: {video_url}"]
+        report_notes = [f"Collection targets: {', '.join(normalized_urls)}"]
 
         try:
-            for index, account in enumerate(accounts, start=1):
+            for account_index, account in enumerate(accounts, start=1):
                 account_logger = get_account_logger(self._logger, account.name)
-                account_logger.info(
-                    "Starting collection pass %s/%s.",
-                    index,
-                    len(accounts),
-                )
                 client = TikTokPlaywrightClient(self._config, account_logger, account)
-                comments = client.scrape_comments(video_url)
-                account_logger.info(
-                    "Collected %s comments without a reply from this account.",
-                    len(comments),
-                )
+                account_total = 0
+                for video_index, video_url in enumerate(normalized_urls, start=1):
+                    account_logger.info(
+                        "Starting collection pass account %s/%s on video %s/%s.",
+                        account_index,
+                        len(accounts),
+                        video_index,
+                        len(normalized_urls),
+                    )
+                    comments = client.scrape_comments(video_url)
+                    account_total += len(comments)
+                    account_logger.info(
+                        "Collected %s comments without a reply from this account on this video.",
+                        len(comments),
+                    )
+
+                    for comment in comments:
+                        existing = merged_comments.get(comment.comment_id)
+                        if existing is None:
+                            merged_comments[comment.comment_id] = comment
+                            continue
+
+                        merged_comments[comment.comment_id] = self._merge_scraped_comments(existing, comment)
 
                 summaries[account.name] = replace(
                     summaries[account.name],
-                    collected_comments=len(comments),
+                    collected_comments=account_total,
                 )
-
-                for comment in comments:
-                    existing = merged_comments.get(comment.comment_id)
-                    if existing is None:
-                        merged_comments[comment.comment_id] = comment
-                        continue
-
-                    merged_comments[comment.comment_id] = self._merge_scraped_comments(existing, comment)
 
             comments_to_export = list(merged_comments.values())
             comments_to_export.sort(key=lambda item: item.published_at or "", reverse=True)

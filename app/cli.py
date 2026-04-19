@@ -57,21 +57,25 @@ class TikTokCli:
 
     def _handle_collect_comments(self) -> None:
         self._print_section("Collect Comments")
-        video_url = input("TikTok video URL: ").strip()
-        if not video_url:
-            print(self._paint("Video URL is required.", RED))
-            self._pause()
-            return
-
         try:
+            collect_mode = self._prompt_collect_mode()
+            if collect_mode == "1":
+                video_urls = [self._prompt_required_video_url()]
+            else:
+                video_urls = self._prompt_video_urls_for_multi_collect()
+                if not video_urls:
+                    print(self._paint("At least one video URL is required.", RED))
+                    self._pause()
+                    return
+
             output_path = self._prompt_optional_path(
                 prompt="Export CSV path",
                 default=None,
                 empty_hint="Press Enter to create a fresh file in exports",
             )
             account_paths = self._prompt_account_paths(action_label="collection")
-            exported_path = self._service.collect_comments(
-                video_url,
+            exported_path = self._service.collect_comments_for_videos(
+                video_urls=video_urls,
                 account_paths=account_paths,
                 output_path=output_path,
             )
@@ -205,6 +209,50 @@ class TikTokCli:
     def _prompt_path(self, prompt: str, default: Path) -> Path:
         raw_value = input(f"{prompt} [{default}]: ").strip()
         return Path(raw_value) if raw_value else default
+
+    def _prompt_collect_mode(self) -> str:
+        print("Collection mode:")
+        print("1. All selected accounts on one video")
+        print("2. Each selected account on each listed video")
+        mode = input("Select mode [1-2]: ").strip() or "1"
+        if mode not in {"1", "2"}:
+            print(self._paint("Unknown mode. Falling back to one video mode.", YELLOW))
+            return "1"
+        return mode
+
+    def _prompt_required_video_url(self) -> str:
+        video_url = input("TikTok video URL: ").strip()
+        if video_url:
+            return video_url
+        raise ValueError("Video URL is required.")
+
+    def _prompt_video_urls_for_multi_collect(self) -> list[str]:
+        print("Paste video URLs (comma-separated or one per line).")
+        print("Submit an empty line to finish.")
+        chunks: list[str] = []
+        while True:
+            raw_value = input("Video URL(s): ").strip()
+            if not raw_value:
+                break
+            chunks.append(raw_value)
+
+        if not chunks:
+            fallback = input("TikTok video URL: ").strip()
+            return [fallback] if fallback else []
+
+        merged = ",".join(chunks).replace("\n", ",")
+        values = [item.strip() for item in merged.split(",")]
+        unique_urls: list[str] = []
+        seen: set[str] = set()
+        for url in values:
+            if not url:
+                continue
+            key = url.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_urls.append(url)
+        return unique_urls
 
     def _prompt_optional_path(
         self,
