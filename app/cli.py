@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 from app.config import AppConfig
 from app.integrations.tiktok_client import (
@@ -222,15 +223,22 @@ class TikTokCli:
             "How many accounts should be used",
             default=max(2, min(max(len(available_paths), 2), 3)),
         )
+        preset = self._prompt_multi_account_creation_preset()
         selected_paths: list[Path] = []
+        prepared_paths: set[str] = set()
         for index in range(count):
             default = available_paths[index] if index < len(available_paths) else None
-            selected_paths.append(
-                self._prompt_account_slot(
-                    slot_index=index + 1,
-                    default_path=default,
-                )
+            selected_path = self._prompt_account_slot(
+                slot_index=index + 1,
+                default_path=default,
+                creation_preset=preset,
             )
+            selected_paths.append(selected_path)
+            path_key = str(selected_path).lower()
+            if path_key in prepared_paths:
+                continue
+            self._ensure_account_session_for_slot(slot_index=index + 1, account_path=selected_path)
+            prepared_paths.add(path_key)
 
         unique_paths: list[Path] = []
         seen: set[str] = set()
@@ -264,6 +272,7 @@ class TikTokCli:
         *,
         slot_index: int,
         default_path: Path | None,
+        creation_preset: dict[str, Any] | None = None,
     ) -> Path:
         if default_path is None:
             print(
@@ -272,7 +281,7 @@ class TikTokCli:
                     YELLOW,
                 )
             )
-            return self._create_account_config_interactively(slot_index)
+            return self._create_account_config_interactively(slot_index, preset=creation_preset)
 
         raw_value = input(
             f"Account #{slot_index} config [{default_path}] "
@@ -281,33 +290,24 @@ class TikTokCli:
         if not raw_value:
             return default_path
         if raw_value.lower() in {"new", "create", "+"}:
-            return self._create_account_config_interactively(slot_index)
+            return self._create_account_config_interactively(slot_index, preset=creation_preset)
         return Path(raw_value)
 
-    def _create_account_config_interactively(self, slot_index: int) -> Path:
+    def _create_account_config_interactively(
+        self,
+        slot_index: int,
+        *,
+        preset: dict[str, Any] | None = None,
+    ) -> Path:
         print()
         print(self._paint(f"Create account #{slot_index}", CYAN, bold=True))
         suggested_name = self._service.suggest_account_name(slot_index)
         account_name = input(f"Account name [{suggested_name}]: ").strip() or suggested_name
 
-        print("Account type:")
-        print("1. Simple account")
-        print("2. Anti-detect account")
-        account_type = input("Select type [1-2]: ").strip() or "1"
-
-        provider_name = "playwright_local"
+        provider_name, api_url, api_token, api_key = self._resolve_account_provider_settings(preset=preset)
         profile_id: str | None = None
-        api_url: str | None = None
-        api_token: str | None = None
-        api_key: str | None = None
-
-        if account_type == "2":
-            provider_name = self._prompt_provider_name()
+        if provider_name != "playwright_local":
             profile_id = self._prompt_required_text("Profile ID")
-            api_url = self._prompt_provider_api_url(provider_name)
-            api_token, api_key = self._prompt_provider_secret(provider_name)
-        elif account_type != "1":
-            print(self._paint("Unknown type. Falling back to a simple account.", YELLOW))
 
         config_path = self._service.create_account_config(
             account_name=account_name,
@@ -320,6 +320,88 @@ class TikTokCli:
         print(self._paint(f"Created config: {config_path}", GREEN))
         self._print_provider_secret_hint(provider_name, config_path, api_token=api_token, api_key=api_key)
         return config_path
+
+    def _prompt_multi_account_creation_preset(self) -> dict[str, Any]:
+        print()
+        print("Default setup for NEW accounts in this multi-account batch:")
+        print("1. Local browser (Playwright)")
+        print("2. Dolphin anti-detect")
+        print("3. AdsPower anti-detect")
+        preset_choice = input("Select preset [1-3]: ").strip() or "1"
+
+        if preset_choice == "2":
+            api_url = self._prompt_provider_api_url("dolphin_anty")
+            api_token, _ = self._prompt_provider_secret("dolphin_anty")
+            return {
+                "provider_name": "dolphin_anty",
+                "api_url": api_url,
+                "api_token": api_token,
+                "api_key": None,
+            }
+
+        if preset_choice == "3":
+            api_url = self._prompt_provider_api_url("adspower")
+            _, api_key = self._prompt_provider_secret("adspower")
+            return {
+                "provider_name": "adspower",
+                "api_url": api_url,
+                "api_token": None,
+                "api_key": api_key,
+            }
+
+        return {
+            "provider_name": "playwright_local",
+            "api_url": None,
+            "api_token": None,
+            "api_key": None,
+        }
+
+    def _resolve_account_provider_settings(
+        self,
+        *,
+        preset: dict[str, Any] | None,
+    ) -> tuple[str, str | None, str | None, str | None]:
+        if preset is not None:
+            provider_name = str(preset.get("provider_name") or "playwright_local")
+            return (
+                provider_name,
+                preset.get("api_url"),
+                preset.get("api_token"),
+                preset.get("api_key"),
+            )
+
+        print("Account type:")
+        print("1. Simple account")
+        print("2. Anti-detect account")
+        account_type = input("Select type [1-2]: ").strip() or "1"
+        if account_type != "2":
+            if account_type != "1":
+                print(self._paint("Unknown type. Falling back to a simple account.", YELLOW))
+            return "playwright_local", None, None, None
+
+        provider_name = self._prompt_provider_name()
+        api_url = self._prompt_provider_api_url(provider_name)
+        api_token, api_key = self._prompt_provider_secret(provider_name)
+        return provider_name, api_url, api_token, api_key
+
+    def _ensure_account_session_for_slot(self, *, slot_index: int, account_path: Path) -> None:
+        print(
+            self._paint(
+                f"Preparing account #{slot_index}: {account_path}",
+                BLUE,
+            )
+        )
+        result = self._service.ensure_account_session(account_path=account_path)
+        if not result.success:
+            raise TikTokClientError(
+                f"Account #{slot_index} is not ready: {result.details}"
+            )
+        print(
+            self._paint(
+                f"Account #{slot_index} is ready ({result.provider_name}).",
+                GREEN,
+            )
+        )
 
     def _prompt_provider_name(self) -> str:
         print("Anti-detect provider:")

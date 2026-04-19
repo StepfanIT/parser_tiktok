@@ -73,6 +73,12 @@ class TikTokCommentService:
             api_key=api_key,
         )
 
+    def ensure_account_session(self, *, account_path: Path) -> AccountHealthCheckResult:
+        _accounts, results = self._health_service.check_accounts([account_path])
+        if not results:
+            raise TikTokClientError(f"Could not validate account config: {account_path}")
+        return results[0]
+
     def run_health_check(
         self,
         *,
