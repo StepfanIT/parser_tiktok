@@ -1,7 +1,7 @@
-from app.integrations.tiktok_client_support import (
+from app.integrations.tiktok_client_support.client import TikTokPlaywrightClient
+from app.integrations.tiktok_client_support.runtime import (
     TikTokClientError,
     TikTokLoginRequiredError,
-    TikTokPlaywrightClient,
     TikTokVerificationRequiredError,
 )
 

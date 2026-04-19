@@ -8,5 +8,15 @@
   "headless": false,
   "slow_mo_ms": 150,
   "login_url": "https://www.tiktok.com/login",
-  "bootstrap_login_if_missing": true
+  "bootstrap_login_if_missing": true,
+  "browser_provider": {
+    "name": "playwright_local",
+    "profile_id": null,
+    "api_url": null,
+    "api_token_env": "DOLPHIN_ANTY_TOKEN",
+    "api_key_env": "ADSPOWER_API_KEY",
+    "require_auth": true,
+    "headless": false,
+    "launch_args": []
+  }
 }

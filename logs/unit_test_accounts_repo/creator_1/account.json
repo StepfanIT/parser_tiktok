@@ -1,0 +1,24 @@
+{
+  "name": "Creator_1",
+  "storage_state_path": "logs\\unit_test_accounts_repo\\creator_1\\storage_state.json",
+  "user_data_dir": "logs\\unit_test_accounts_repo\\creator_1\\user_data",
+  "tiktok_username": null,
+  "browser_type": "chromium",
+  "browser_channel": null,
+  "headless": false,
+  "slow_mo_ms": 150,
+  "login_url": "https://www.tiktok.com/login",
+  "bootstrap_login_if_missing": true,
+  "browser_provider": {
+    "name": "dolphin_anty",
+    "profile_id": "profile-123",
+    "api_url": "http://127.0.0.1:3001",
+    "api_token": null,
+    "api_token_env": "DOLPHIN_ANTY_TOKEN",
+    "api_key": null,
+    "api_key_env": null,
+    "require_auth": true,
+    "headless": false,
+    "launch_args": []
+  }
+}

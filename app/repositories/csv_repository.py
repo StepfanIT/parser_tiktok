@@ -69,22 +69,31 @@ class CSVRepository:
         comments: list[OutgoingComment] = []
         with target_path.open("r", encoding="utf-8-sig", newline="") as file:
             reader = csv.DictReader(file)
-            required_columns = {"video_url", "comment_text"}
-            if not reader.fieldnames or not required_columns.issubset(reader.fieldnames):
+            has_video_url = bool(reader.fieldnames and "video_url" in reader.fieldnames)
+            has_comment_column = bool(
+                reader.fieldnames
+                and ("comment_text" in reader.fieldnames or "comment_texts" in reader.fieldnames)
+            )
+            if not has_video_url or not has_comment_column:
                 raise ValueError(
-                    "CSV для надсилання має містити колонки: video_url, comment_text. "
-                    "Необов'язково: order, delay_seconds, account_name, allowed_accounts, eligible_accounts."
+                    "Outgoing CSV must contain video_url and at least one text column: "
+                    "comment_text or comment_texts. Optional: order, delay_seconds, "
+                    "account_name, allowed_accounts, eligible_accounts, target_username."
                 )
 
             for index, row in enumerate(reader, start=1):
                 video_url = (row.get("video_url") or "").strip()
-                comment_text = (row.get("comment_text") or "").strip()
-                if not video_url or not comment_text:
+                text_variants = self._parse_comment_variants(
+                    raw_comment_text=row.get("comment_text"),
+                    raw_comment_texts=row.get("comment_texts"),
+                )
+                if not video_url or not text_variants:
                     continue
 
                 order_value = (row.get("order") or "").strip()
                 delay_value = (row.get("delay_seconds") or "").strip()
                 account_name = (row.get("account_name") or "").strip()
+                target_username = (row.get("target_username") or "").strip().lstrip("@") or None
                 allowed_accounts_value = (
                     (row.get("allowed_accounts") or row.get("eligible_accounts") or "").strip()
                 )
@@ -101,11 +110,13 @@ class CSVRepository:
                     OutgoingComment(
                         order=int(order_value) if order_value else index,
                         video_url=video_url,
-                        text=comment_text,
+                        text=text_variants[0],
                         delay_seconds=int(delay_value)
                         if delay_value
                         else (0 if index == 1 else self._config.default_comment_delay_seconds),
                         allowed_account_names=allowed_accounts,
+                        target_username=target_username,
+                        text_variants=text_variants,
                     )
                 )
 
@@ -135,3 +146,22 @@ class CSVRepository:
     def _build_default_export_path(self) -> Path:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         return self._config.exports_dir / f"scraped_comments_{timestamp}.csv"
+
+    @staticmethod
+    def _parse_comment_variants(
+        *,
+        raw_comment_text: str | None,
+        raw_comment_texts: str | None,
+    ) -> tuple[str, ...]:
+        single_text = (raw_comment_text or "").strip()
+        multiple_texts = (raw_comment_texts or "").strip()
+
+        if multiple_texts:
+            normalized = multiple_texts.replace("\r\n", "\n").replace("\n", "|")
+            variants = tuple(item.strip() for item in normalized.split("|") if item.strip())
+            if variants:
+                return variants
+
+        if single_text:
+            return (single_text,)
+        return ()

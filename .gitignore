@@ -3,6 +3,10 @@ __pycache__/
 *.pyc
 *.pyc.*
 logs/*.log
+logs/reports/
+logs/unit_test_reports/
 exports/*.csv
 data/accounts/*storage_state.json
 data/accounts/*_user_data/
+data/accounts/*.local.json
+report_repo_test_*/

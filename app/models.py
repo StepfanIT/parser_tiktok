@@ -1,8 +1,60 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+@dataclass(frozen=True)
+class BrowserProviderConfig:
+    name: str = "playwright_local"
+    profile_id: str | None = None
+    api_url: str | None = None
+    api_token: str | None = None
+    api_token_env: str | None = None
+    api_key: str | None = None
+    api_key_env: str | None = None
+    require_auth: bool = True
+    headless: bool = False
+    launch_args: tuple[str, ...] = ()
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any] | None) -> "BrowserProviderConfig":
+        if not payload:
+            return cls()
+
+        launch_args = payload.get("launch_args") or ()
+        if not isinstance(launch_args, (list, tuple)):
+            launch_args = ()
+
+        return cls(
+            name=str(payload.get("name", "playwright_local")).strip() or "playwright_local",
+            profile_id=str(payload["profile_id"]).strip() if payload.get("profile_id") else None,
+            api_url=str(payload["api_url"]).strip() if payload.get("api_url") else None,
+            api_token=str(payload["api_token"]).strip() if payload.get("api_token") else None,
+            api_token_env=str(payload["api_token_env"]).strip() if payload.get("api_token_env") else None,
+            api_key=str(payload["api_key"]).strip() if payload.get("api_key") else None,
+            api_key_env=str(payload["api_key_env"]).strip() if payload.get("api_key_env") else None,
+            require_auth=bool(payload.get("require_auth", True)),
+            headless=bool(payload.get("headless", False)),
+            launch_args=tuple(str(item).strip() for item in launch_args if str(item).strip()),
+        )
+
+    def resolved_api_token(self) -> str | None:
+        return self._resolve_secret(self.api_token, self.api_token_env)
+
+    def resolved_api_key(self) -> str | None:
+        return self._resolve_secret(self.api_key, self.api_key_env)
+
+    @staticmethod
+    def _resolve_secret(raw_value: str | None, env_name: str | None) -> str | None:
+        if raw_value:
+            return raw_value
+        if env_name:
+            resolved = os.getenv(env_name, "").strip()
+            return resolved or None
+        return None
 
 
 @dataclass(frozen=True)
@@ -17,6 +69,7 @@ class TikTokAccountConfig:
     slow_mo_ms: int = 150
     login_url: str = "https://www.tiktok.com/login"
     bootstrap_login_if_missing: bool = True
+    browser_provider: BrowserProviderConfig = field(default_factory=BrowserProviderConfig)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any], project_root: Path) -> "TikTokAccountConfig":
@@ -44,6 +97,7 @@ class TikTokAccountConfig:
             slow_mo_ms=int(payload.get("slow_mo_ms", 150)),
             login_url=str(payload.get("login_url", "https://www.tiktok.com/login")),
             bootstrap_login_if_missing=bool(payload.get("bootstrap_login_if_missing", True)),
+            browser_provider=BrowserProviderConfig.from_dict(payload.get("browser_provider")),
         )
 
 
@@ -68,6 +122,15 @@ class OutgoingComment:
     text: str
     delay_seconds: int
     allowed_account_names: tuple[str, ...] = ()
+    target_username: str | None = None
+    text_variants: tuple[str, ...] = ()
+
+    @property
+    def available_texts(self) -> tuple[str, ...]:
+        normalized = tuple(item.strip() for item in self.text_variants if str(item).strip())
+        if normalized:
+            return normalized
+        return (self.text,)
 
 
 @dataclass(frozen=True)
@@ -75,6 +138,14 @@ class SendResult:
     account_name: str
     outgoing_comment: OutgoingComment
     success: bool
+    details: str
+    status: str = "unknown"
+
+
+@dataclass(frozen=True)
+class PublishOutcome:
+    success: bool
+    status: str
     details: str
 
 
@@ -89,6 +160,29 @@ class SendBehaviorConfig:
     batch_pause_min_seconds: int
     batch_pause_max_seconds: int
     comment_delay_choices: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class AccountHealthCheckResult:
+    account_name: str
+    provider_name: str
+    success: bool
+    details: str
+    resolved_username: str | None = None
+    api_url: str | None = None
+
+
+@dataclass(frozen=True)
+class RunAccountSummary:
+    account_name: str
+    provider_name: str
+    health_status: str
+    collected_comments: int = 0
+    attempted_comments: int = 0
+    successful_comments: int = 0
+    failed_comments: int = 0
+    statuses: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
 
 
 @dataclass

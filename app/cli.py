@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 from app.config import AppConfig
@@ -10,6 +11,14 @@ from app.integrations.tiktok_client import (
     TikTokVerificationRequiredError,
 )
 from app.services.comment_service import TikTokCommentService
+
+RESET = "\033[0m"
+BOLD = "\033[1m"
+BLUE = "\033[38;5;75m"
+GREEN = "\033[38;5;120m"
+YELLOW = "\033[38;5;221m"
+RED = "\033[38;5;203m"
+CYAN = "\033[38;5;81m"
 
 
 class TikTokCli:
@@ -24,94 +33,148 @@ class TikTokCli:
         self._service = service
 
     def run(self) -> None:
+        self._print_startup_banner()
         while True:
             self._print_menu()
-            choice = input("Оберіть опцію [1-3]: ").strip()
+            choice = input("Select an option [1-4]: ").strip()
             if choice == "1":
                 self._handle_collect_comments()
             elif choice == "2":
                 self._handle_send_comments()
             elif choice == "3":
-                print("Завершення роботи.")
+                self._handle_health_check()
+            elif choice == "4":
+                print(self._paint("Exiting.", GREEN))
                 return
             else:
-                print("Невідома опція. Введіть 1, 2 або 3.")
+                print(self._paint("Unknown option. Please enter 1, 2, 3, or 4.", YELLOW))
                 self._pause()
 
     def _handle_collect_comments(self) -> None:
-        print()
-        video_url = input("Посилання на TikTok-відео: ").strip()
+        self._print_section("Collect Comments")
+        video_url = input("TikTok video URL: ").strip()
         if not video_url:
-            print("Посилання на відео обов'язкове.")
+            print(self._paint("Video URL is required.", RED))
             self._pause()
             return
 
         try:
             output_path = self._prompt_optional_path(
-                prompt="Шлях для CSV-експорту",
+                prompt="Export CSV path",
                 default=None,
-                empty_hint="Enter = створити новий файл в exports",
+                empty_hint="Press Enter to create a fresh file in exports",
             )
-            account_paths = self._prompt_account_paths(action_label="збору")
+            account_paths = self._prompt_account_paths(action_label="collection")
             exported_path = self._service.collect_comments(
                 video_url,
                 account_paths=account_paths,
                 output_path=output_path,
             )
-            print(f"Коментарі збережено у: {exported_path}")
+            print(self._paint(f"Comments saved to: {exported_path}", GREEN))
         except (FileNotFoundError, ValueError, TikTokClientError) as error:
-            self._logger.exception("Помилка під час збирання коментарів.")
-            print(f"Не вдалося зібрати коментарі: {error}")
+            self._logger.exception("Comment collection failed.")
+            print(self._paint(f"Could not collect comments: {error}", RED))
 
         self._pause()
 
     def _handle_send_comments(self) -> None:
-        print()
+        self._print_section("Send Comments")
         try:
             csv_path = self._prompt_path(
-                prompt="Шлях до CSV з коментарями",
+                prompt="Outgoing CSV path",
                 default=self._config.default_outgoing_comments_csv,
             )
-            account_paths = self._prompt_account_paths(action_label="надсилання")
+            account_paths = self._prompt_account_paths(action_label="sending")
             results = self._service.send_comments(
                 account_paths=account_paths,
                 csv_path=csv_path,
             )
             success_count = sum(1 for result in results if result.success)
-            print(f"Завершено: успішно {success_count} з {len(results)} коментарів.")
+            print(
+                self._paint(
+                    f"Done: {success_count}/{len(results)} comments sent successfully.",
+                    GREEN,
+                )
+            )
             for result in results:
-                status = "OK" if result.success else "WARN"
-                print(f"[{status}] {result.account_name} | #{result.outgoing_comment.order}: {result.details}")
+                status = result.status.upper()
+                print(
+                    f"[{status}] {result.account_name} | "
+                    f"#{result.outgoing_comment.order}: {result.details}"
+                )
         except TikTokVerificationRequiredError as error:
-            self._logger.exception("TikTok просить ручну перевірку.")
-            print(f"Потрібно пройти перевірку TikTok у браузері: {error}")
+            self._logger.exception("TikTok requires manual verification.")
+            print(self._paint(f"TikTok verification is required in the browser: {error}", YELLOW))
         except TikTokLoginRequiredError as error:
-            self._logger.exception("Потрібно оновити логін або сесію.")
-            print(f"Проблема з логіном або сесією: {error}")
+            self._logger.exception("TikTok session refresh is required.")
+            print(self._paint(f"Login/session issue: {error}", RED))
         except (FileNotFoundError, ValueError, TikTokClientError) as error:
-            self._logger.exception("Помилка під час надсилання коментарів.")
-            print(f"Не вдалося надіслати коментарі: {error}")
+            self._logger.exception("Comment sending failed.")
+            print(self._paint(f"Could not send comments: {error}", RED))
+
+        self._pause()
+
+    def _handle_health_check(self) -> None:
+        self._print_section("Account Health Check")
+        try:
+            account_paths = self._prompt_account_paths(action_label="health check")
+            results, report_path = self._service.run_health_check(account_paths=account_paths)
+            success_count = sum(1 for result in results if result.success)
+            print(
+                self._paint(
+                    f"Health check complete: {success_count}/{len(results)} accounts passed.",
+                    GREEN if success_count == len(results) else YELLOW,
+                )
+            )
+            for result in results:
+                status = "OK" if result.success else "FAIL"
+                print(f"[{status}] {result.account_name} | {result.provider_name} | {result.details}")
+            print(self._paint(f"Report saved to: {report_path}", GREEN))
+        except (FileNotFoundError, ValueError, TikTokClientError) as error:
+            self._logger.exception("Health check failed.")
+            print(self._paint(f"Health check error: {error}", RED))
 
         self._pause()
 
     @staticmethod
     def _pause() -> None:
         print()
-        input("Натисніть Enter, щоб повернутися в меню... ")
+        input("Press Enter to return to the menu... ")
 
     def _print_menu(self) -> None:
         print()
-        print("=" * 52)
-        print("TikTok Parser MVP")
-        print("=" * 52)
-        print("1. Збір коментарів")
-        print("2. Надіслати коментарі")
-        print("3. Вихід")
+        print(self._paint("=" * 60, CYAN))
+        print(self._paint("TikTok Parser Console", CYAN, bold=True))
+        print(self._paint("=" * 60, CYAN))
+        print("1. Collect comments")
+        print("2. Send comments")
+        print("3. Account health check")
+        print("4. Exit")
         print()
-        print(f"Конфіг за замовч.: {self._config.default_account_path}")
-        print(f"CSV для відправки: {self._config.default_outgoing_comments_csv}")
-        print(f"Логи:              {self._config.logs_dir / 'app.log'}")
-        print("=" * 52)
+        print(f"Default account config: {self._config.default_account_path}")
+        print(f"Outgoing CSV:          {self._config.default_outgoing_comments_csv}")
+        print(f"Logs:                  {self._config.logs_dir / 'app.log'}")
+        print(self._paint("=" * 60, CYAN))
+
+    @staticmethod
+    def _print_startup_banner() -> None:
+        print(
+            fr"""{CYAN}{BOLD}
+  _______ _ _    _______     _
+ |__   __(_) |  |__   __|   | |
+    | |   _| | __  | | ___  | | __
+    | |  | | |/ /  | |/ _ \ | |/ /
+    | |  | |   <   | | (_) ||   <
+    |_|  |_|_|\_\  |_|\___(_)_|\_\
+
+             __
+            / /_
+       ____/ __/
+      / __  /_
+      \__,_/\__|
+            TikTok
+            {RESET}"""
+        )
 
     def _prompt_path(self, prompt: str, default: Path) -> Path:
         raw_value = input(f"{prompt} [{default}]: ").strip()
@@ -131,43 +194,41 @@ class TikTokCli:
         return Path(raw_value)
 
     def _prompt_account_paths(self, *, action_label: str) -> list[Path]:
-        print()
+        self._print_section(f"Accounts · {action_label.title()}")
         available_paths = self._service.list_available_account_paths()
         if available_paths:
-            print("Доступні конфіги акаунтів:")
+            print(self._paint("Available account configs:", BLUE, bold=True))
             for index, path in enumerate(available_paths, start=1):
                 print(f"{index}. {path}")
         else:
-            print("У папці data/accounts поки що не знайдено додаткових конфігів.")
+            print(self._paint("No account configs found yet in data/accounts.", YELLOW))
 
         print()
-        print(f"Режим акаунтів для {action_label}:")
-        print("1. Один акаунт")
-        print("2. Кілька акаунтів")
-        mode = input("Оберіть режим [1-2]: ").strip() or "1"
+        print(f"Account mode for {action_label}:")
+        print("1. Single account")
+        print("2. Multiple accounts")
+        mode = input("Select mode [1-2]: ").strip() or "1"
 
         if mode == "1":
-            return [self._prompt_path("Шлях до конфігу акаунта", self._config.default_account_path)]
+            default = available_paths[0] if available_paths else None
+            return [self._prompt_account_slot(slot_index=1, default_path=default)]
 
         if mode != "2":
-            print("Невідомий режим, беру один акаунт за замовчуванням.")
-            return [self._prompt_path("Шлях до конфігу акаунта", self._config.default_account_path)]
+            print(self._paint("Unknown mode. Falling back to a single account.", YELLOW))
+            default = available_paths[0] if available_paths else None
+            return [self._prompt_account_slot(slot_index=1, default_path=default)]
 
-        count = self._prompt_positive_int("Скільки акаунтів використати", default=max(2, min(len(available_paths), 3)))
+        count = self._prompt_positive_int(
+            "How many accounts should be used",
+            default=max(2, min(max(len(available_paths), 2), 3)),
+        )
         selected_paths: list[Path] = []
         for index in range(count):
             default = available_paths[index] if index < len(available_paths) else None
-            if default is None:
-                raw_value = input(f"Шлях до конфігу акаунта #{index + 1}: ").strip()
-                if not raw_value:
-                    raise ValueError("Для багатоакаунтного режиму шлях до кожного конфігу обов'язковий.")
-                selected_paths.append(Path(raw_value))
-                continue
-
             selected_paths.append(
-                self._prompt_path(
-                    prompt=f"Шлях до конфігу акаунта #{index + 1}",
-                    default=default,
+                self._prompt_account_slot(
+                    slot_index=index + 1,
+                    default_path=default,
                 )
             )
 
@@ -179,6 +240,12 @@ class TikTokCli:
                 continue
             seen.add(key)
             unique_paths.append(path)
+        print(
+            self._paint(
+                "A browser window will open for each selected account during the session check.",
+                BLUE,
+            )
+        )
         return unique_paths
 
     @staticmethod
@@ -189,5 +256,149 @@ class TikTokCli:
 
         value = int(raw_value)
         if value <= 0:
-            raise ValueError("Число має бути більше нуля.")
+            raise ValueError("The value must be greater than zero.")
         return value
+
+    def _prompt_account_slot(
+        self,
+        *,
+        slot_index: int,
+        default_path: Path | None,
+    ) -> Path:
+        if default_path is None:
+            print(
+                self._paint(
+                    f"No existing config for account #{slot_index}. Creating a new account config now.",
+                    YELLOW,
+                )
+            )
+            return self._create_account_config_interactively(slot_index)
+
+        raw_value = input(
+            f"Account #{slot_index} config [{default_path}] "
+            f"(Enter = use, NEW = create another): "
+        ).strip()
+        if not raw_value:
+            return default_path
+        if raw_value.lower() in {"new", "create", "+"}:
+            return self._create_account_config_interactively(slot_index)
+        return Path(raw_value)
+
+    def _create_account_config_interactively(self, slot_index: int) -> Path:
+        print()
+        print(self._paint(f"Create account #{slot_index}", CYAN, bold=True))
+        suggested_name = self._service.suggest_account_name(slot_index)
+        account_name = input(f"Account name [{suggested_name}]: ").strip() or suggested_name
+
+        print("Account type:")
+        print("1. Simple account")
+        print("2. Anti-detect account")
+        account_type = input("Select type [1-2]: ").strip() or "1"
+
+        provider_name = "playwright_local"
+        profile_id: str | None = None
+        api_url: str | None = None
+        api_token: str | None = None
+        api_key: str | None = None
+
+        if account_type == "2":
+            provider_name = self._prompt_provider_name()
+            profile_id = self._prompt_required_text("Profile ID")
+            api_url = self._prompt_provider_api_url(provider_name)
+            api_token, api_key = self._prompt_provider_secret(provider_name)
+        elif account_type != "1":
+            print(self._paint("Unknown type. Falling back to a simple account.", YELLOW))
+
+        config_path = self._service.create_account_config(
+            account_name=account_name,
+            provider_name=provider_name,
+            profile_id=profile_id,
+            api_url=api_url,
+            api_token=api_token,
+            api_key=api_key,
+        )
+        print(self._paint(f"Created config: {config_path}", GREEN))
+        self._print_provider_secret_hint(provider_name, config_path, api_token=api_token, api_key=api_key)
+        return config_path
+
+    def _prompt_provider_name(self) -> str:
+        print("Anti-detect provider:")
+        print("1. Dolphin")
+        print("2. AdsPower")
+        provider_choice = input("Select provider [1-2]: ").strip() or "1"
+        if provider_choice == "2":
+            return "adspower"
+        return "dolphin_anty"
+
+    def _prompt_provider_api_url(self, provider_name: str) -> str | None:
+        if provider_name == "dolphin_anty":
+            default_api_url = "http://127.0.0.1:3001"
+            raw_value = input(f"Dolphin API URL [{default_api_url}]: ").strip()
+            return raw_value or default_api_url
+
+        default_api_url = "http://127.0.0.1:50325"
+        raw_value = input(f"AdsPower API URL [{default_api_url}]: ").strip()
+        return raw_value or default_api_url
+
+    def _prompt_provider_secret(self, provider_name: str) -> tuple[str | None, str | None]:
+        if provider_name == "dolphin_anty":
+            raw_value = input("Dolphin token [Enter = use env DOLPHIN_ANTY_TOKEN]: ").strip()
+            if not raw_value and not os.getenv("DOLPHIN_ANTY_TOKEN", "").strip():
+                print(
+                    self._paint(
+                        "Token not provided. Set DOLPHIN_ANTY_TOKEN before running this account.",
+                        YELLOW,
+                    )
+                )
+            return raw_value or None, None
+
+        raw_value = input("AdsPower API key [Enter = use env ADSPOWER_API_KEY]: ").strip()
+        if not raw_value and not os.getenv("ADSPOWER_API_KEY", "").strip():
+            print(
+                self._paint(
+                    "API key not provided. Set ADSPOWER_API_KEY before running this account.",
+                    YELLOW,
+                )
+            )
+        return None, raw_value or None
+
+    def _print_provider_secret_hint(
+        self,
+        provider_name: str,
+        config_path: Path,
+        *,
+        api_token: str | None,
+        api_key: str | None,
+    ) -> None:
+        if provider_name == "dolphin_anty" and not api_token:
+            print(
+                self._paint(
+                    f"Token placeholder: set DOLPHIN_ANTY_TOKEN or edit browser_provider.api_token in {config_path}.",
+                    BLUE,
+                )
+            )
+        elif provider_name == "adspower" and not api_key:
+            print(
+                self._paint(
+                    f"Key placeholder: set ADSPOWER_API_KEY or edit browser_provider.api_key in {config_path}.",
+                    BLUE,
+                )
+            )
+
+    @staticmethod
+    def _prompt_required_text(prompt: str) -> str:
+        raw_value = input(f"{prompt}: ").strip()
+        if raw_value:
+            return raw_value
+        raise ValueError(f"{prompt} is required.")
+
+    @staticmethod
+    def _print_section(title: str) -> None:
+        print()
+        print(f"{CYAN}{BOLD}{title}{RESET}")
+        print(f"{CYAN}{'-' * max(len(title), 16)}{RESET}")
+
+    @staticmethod
+    def _paint(value: str, color: str, *, bold: bool = False) -> str:
+        prefix = f"{BOLD}{color}" if bold else color
+        return f"{prefix}{value}{RESET}"
