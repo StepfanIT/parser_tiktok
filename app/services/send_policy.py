@@ -113,7 +113,7 @@ class SendExecutionPolicy:
 
     def resolve_delay_seconds(self, rng: random.Random) -> int:
         base_delay = rng.choice(self._config.send_behavior.comment_delay_choices)
-        jitter = rng.choice((-1, 0, 1, 2))
+        jitter = rng.choice((-2, -1, 0, 1, 2, 3, 5))
         return max(base_delay + jitter, 2)
 
     @staticmethod
