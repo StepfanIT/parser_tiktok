@@ -80,6 +80,8 @@ class SendExecutionPolicy:
         pending_pool: list[OutgoingComment],
         state: AccountSendState,
         rng: random.Random,
+        *,
+        max_batch_size_cap: int | None = None,
     ) -> list[OutgoingComment]:
         eligible_comments = [
             comment for comment in pending_pool if self.comment_matches_account(comment, state.account)
@@ -93,6 +95,8 @@ class SendExecutionPolicy:
                 self._config.send_behavior.batch_size_max,
             ),
         )
+        if max_batch_size_cap is not None:
+            max_batch_size = min(max_batch_size, max(max_batch_size_cap, 1))
         if max_batch_size <= 0:
             return []
 

@@ -4,6 +4,7 @@ import logging
 import random
 import time
 from collections.abc import Iterable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from app.config import AppConfig
 from app.integrations.tiktok_client import TikTokClientError, TikTokPlaywrightClient
 from app.logging_config import get_account_logger
 from app.models import (
+    AccountSendState,
     AccountHealthCheckResult,
     OutgoingComment,
     RunAccountSummary,
@@ -233,49 +235,85 @@ class TikTokCommentService:
                     time.sleep(wait_seconds)
                     continue
 
-                state = rng.choice(eligible_states)
-                batch = self._send_policy.take_batch_for_account(pending_pool, state, rng)
-                account_logger = get_account_logger(self._logger, state.account.name)
-                account_logger.info(
-                    "Starting batch %s with %s comments. Queue remaining after selection: %s.",
-                    state.batch_index + 1,
-                    len(batch),
-                    len(pending_pool),
+                rng.shuffle(eligible_states)
+                fair_batch_cap = max(
+                    1,
+                    (len(pending_pool) + len(eligible_states) - 1) // len(eligible_states),
                 )
+                scheduled_batches: list[tuple[AccountSendState, list[OutgoingComment]]] = []
+                for state in eligible_states:
+                    batch = self._send_policy.take_batch_for_account(
+                        pending_pool,
+                        state,
+                        rng,
+                        max_batch_size_cap=fair_batch_cap,
+                    )
+                    if not batch:
+                        continue
+                    account_logger = get_account_logger(self._logger, state.account.name)
+                    account_logger.info(
+                        "Starting batch %s with %s comments. Queue remaining after selection: %s.",
+                        state.batch_index + 1,
+                        len(batch),
+                        len(pending_pool),
+                    )
+                    scheduled_batches.append((state, batch))
 
-                client = TikTokPlaywrightClient(self._config, account_logger, state.account)
-                batch_results = client.send_comments(batch)
-                results.extend(batch_results)
+                if not scheduled_batches:
+                    wait_seconds = self._send_policy.seconds_until_next_available_slot(states)
+                    if wait_seconds is None:
+                        raise TikTokClientError(
+                            "No batches could be scheduled for eligible accounts."
+                        )
+                    self._logger.info(
+                        "Eligible accounts found, but no batches were scheduled. Waiting %s seconds.",
+                        wait_seconds,
+                    )
+                    time.sleep(wait_seconds)
+                    continue
 
-                successful_count = sum(1 for result in batch_results if result.success)
-                attempts_count = len(batch_results)
-                state.sent_today += attempts_count
-                state.sent_this_hour += attempts_count
-                state.batch_index += 1
+                max_workers = max(1, min(len(scheduled_batches), 6))
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    future_map = {
+                        executor.submit(self._send_batch_for_state, state, batch): (state, batch)
+                        for state, batch in scheduled_batches
+                    }
+                    for future in as_completed(future_map):
+                        state, _batch = future_map[future]
+                        batch_results = future.result()
+                        results.extend(batch_results)
 
-                summaries[state.account.name] = replace(
-                    summaries[state.account.name],
-                    attempted_comments=summaries[state.account.name].attempted_comments + attempts_count,
-                    successful_comments=summaries[state.account.name].successful_comments + successful_count,
-                    failed_comments=summaries[state.account.name].failed_comments + (attempts_count - successful_count),
-                    statuses=summaries[state.account.name].statuses
-                    + tuple(result.status for result in batch_results),
-                )
+                        successful_count = sum(1 for result in batch_results if result.success)
+                        attempts_count = len(batch_results)
+                        state.sent_today += attempts_count
+                        state.sent_this_hour += attempts_count
+                        state.batch_index += 1
 
-                account_logger.info(
-                    "Finished batch %s. Successful sends: %s/%s.",
-                    state.batch_index,
-                    successful_count,
-                    attempts_count,
-                )
+                        summaries[state.account.name] = replace(
+                            summaries[state.account.name],
+                            attempted_comments=summaries[state.account.name].attempted_comments + attempts_count,
+                            successful_comments=summaries[state.account.name].successful_comments + successful_count,
+                            failed_comments=summaries[state.account.name].failed_comments
+                            + (attempts_count - successful_count),
+                            statuses=summaries[state.account.name].statuses
+                            + tuple(result.status for result in batch_results),
+                        )
 
-                pause_seconds = self._send_policy.schedule_next_cooldown(
-                    state,
-                    has_pending_comments=bool(pending_pool),
-                    rng=rng,
-                )
-                if pause_seconds is not None:
-                    account_logger.info("Next batch cooldown: %s seconds.", pause_seconds)
+                        account_logger = get_account_logger(self._logger, state.account.name)
+                        account_logger.info(
+                            "Finished batch %s. Successful sends: %s/%s.",
+                            state.batch_index,
+                            successful_count,
+                            attempts_count,
+                        )
+
+                        pause_seconds = self._send_policy.schedule_next_cooldown(
+                            state,
+                            has_pending_comments=bool(pending_pool),
+                            rng=rng,
+                        )
+                        if pause_seconds is not None:
+                            account_logger.info("Next batch cooldown: %s seconds.", pause_seconds)
 
             self._logger.info(
                 "Sending finished. Successful comments: %s/%s.",
@@ -289,6 +327,15 @@ class TikTokCommentService:
                 summaries=summaries.values(),
                 notes=report_notes,
             )
+
+    def _send_batch_for_state(
+        self,
+        state: AccountSendState,
+        batch: list[OutgoingComment],
+    ) -> list[SendResult]:
+        account_logger = get_account_logger(self._logger, state.account.name)
+        client = TikTokPlaywrightClient(self._config, account_logger, state.account)
+        return client.send_comments(batch)
 
     def _merge_scraped_comments(self, left: ScrapedComment, right: ScrapedComment) -> ScrapedComment:
         eligible_accounts = tuple(
