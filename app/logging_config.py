@@ -90,7 +90,10 @@ class PrettyConsoleFormatter(logging.Formatter):
         elif record.stack_info:
             message = f"{message}\n{self.formatStack(record.stack_info)}"
 
-        return f"{timestamp} | {level} | {account} | {logger_name} | {message}"
+        row = f"{timestamp} | {level} | {account} | {logger_name} | {message}"
+        if account_name == "SYSTEM":
+            return row
+        return self._colorize(self._account_color(account_name), row)
 
     @staticmethod
     def _colorize(code: str, value: str) -> str:
