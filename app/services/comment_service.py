@@ -301,8 +301,18 @@ class TikTokCommentService:
                         for state, batch in scheduled_batches
                     }
                     for future in as_completed(future_map):
-                        state, _batch = future_map[future]
-                        batch_results = future.result()
+                        state, batch_items = future_map[future]
+                        try:
+                            batch_results = future.result()
+                        except Exception as error:
+                            account_logger = get_account_logger(self._logger, state.account.name)
+                            account_logger.exception("Batch failed with an exception: %s", error)
+                            batch_results = self._build_failed_send_results(
+                                account_name=state.account.name,
+                                comments=batch_items,
+                                error=error,
+                                status="batch_error",
+                            )
                         results.extend(batch_results)
 
                         successful_count = sum(1 for result in batch_results if result.success)
@@ -401,7 +411,17 @@ class TikTokCommentService:
             }
             for future in as_completed(future_map):
                 account, comments = future_map[future]
-                account_results = future.result()
+                try:
+                    account_results = future.result()
+                except Exception as error:
+                    account_logger = get_account_logger(self._logger, account.name)
+                    account_logger.exception("Account batch failed with an exception: %s", error)
+                    account_results = self._build_failed_send_results(
+                        account_name=account.name,
+                        comments=comments,
+                        error=error,
+                        status="batch_error",
+                    )
                 results.extend(account_results)
 
                 successful_count = sum(1 for item in account_results if item.success)
@@ -434,6 +454,26 @@ class TikTokCommentService:
         )
         client = TikTokPlaywrightClient(self._config, account_logger, account)
         return client.send_comments(comments)
+
+    def _build_failed_send_results(
+        self,
+        *,
+        account_name: str,
+        comments: list[OutgoingComment],
+        error: Exception,
+        status: str,
+    ) -> list[SendResult]:
+        details = str(error) or error.__class__.__name__
+        return [
+            SendResult(
+                account_name=account_name,
+                outgoing_comment=comment,
+                success=False,
+                details=details,
+                status=status,
+            )
+            for comment in comments
+        ]
 
     def _merge_scraped_comments(self, left: ScrapedComment, right: ScrapedComment) -> ScrapedComment:
         eligible_accounts = tuple(

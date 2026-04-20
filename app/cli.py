@@ -237,10 +237,10 @@ class TikTokCli:
         return mode
 
     def _prompt_send_mode(self) -> str:
-        print("Sending mode:")
-        print("1. Distribute rows across selected accounts (total rows are sent once)")
-        print("2. Each selected account sends all eligible rows")
-        print("0. Back to main menu")
+        print("Sending mode / Режим надсилання:")
+        print("1. Distribute rows across selected accounts (кожен рядок відправляється один раз загалом)")
+        print("2. Each selected account sends all eligible rows (кожен акаунт шле всі підходящі рядки)")
+        print("0. Back to main menu (назад у головне меню)")
         mode = input("Select mode [0-2]: ").strip() or "1"
         self._raise_if_back_requested(mode)
         if mode == "2":
