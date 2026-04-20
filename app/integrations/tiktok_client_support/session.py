@@ -105,18 +105,27 @@ class TikTokSessionMixin:
             page = self._goto_with_retry(page, self._account.login_url, wait_until="domcontentloaded")
         except (TimeoutError, Error) as error:
             raise TikTokClientError(f"Failed to open the TikTok login page: {error}") from error
-        print()
-        print("The TikTok session is inactive or expired.")
-        print("Sign in to TikTok manually in the already opened browser profile.")
-        input("Press Enter here after the login succeeds to continue... ")
+        for attempt in range(1, 4):
+            print()
+            print("The TikTok session is inactive or expired.")
+            print("Sign in to TikTok manually in the already opened browser profile.")
+            if attempt > 1:
+                print(
+                    "TikTok still shows login required. "
+                    "Finish captcha/2FA and press Enter to re-check."
+                )
+            input("Press Enter here after the login succeeds to continue... ")
 
-        page.wait_for_timeout(1_500)
-        self._dismiss_overlays(page)
-        self._wait_for_verification_if_needed(page)
-        if self._is_login_required(page):
-            raise TikTokLoginRequiredError(
-                "TikTok still requires login after the manual sign-in step."
-            )
+            page.wait_for_timeout(2_000)
+            self._dismiss_overlays(page)
+            self._wait_for_verification_if_needed(page)
+            if not self._is_login_required(page):
+                break
+
+            if attempt == 3:
+                raise TikTokLoginRequiredError(
+                    "TikTok still requires login after multiple manual sign-in checks."
+                )
 
         self._persist_storage_state(page.context)
         if return_url:

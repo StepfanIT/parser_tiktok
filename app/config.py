@@ -50,8 +50,8 @@ def load_app_config() -> AppConfig:
             hourly_limit_max=18,
             batch_size_min=5,
             batch_size_max=12,
-            batch_pause_min_seconds=180,
-            batch_pause_max_seconds=540,
-            comment_delay_choices=(2, 3, 4, 5, 7, 8, 9, 11, 13, 17),
+            batch_pause_min_seconds=150,
+            batch_pause_max_seconds=720,
+            comment_delay_choices=(2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 15, 18, 21, 27, 34),
         ),
     )
