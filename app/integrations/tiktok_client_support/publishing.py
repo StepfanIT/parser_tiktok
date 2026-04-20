@@ -53,6 +53,15 @@ class TikTokPublishingMixin:
                 status="publish_timeout",
                 details="Publish response was not captured after clicking the send button.",
             )
+        if outcome.success and not self._confirm_comment_visible(page, outgoing_comment.text):
+            outcome = PublishOutcome(
+                success=False,
+                status="posted_unverified",
+                details=(
+                    "API returned success, but the comment was not visible in the UI after posting. "
+                    "Possible moderation delay/shadow filtering."
+                ),
+            )
 
         self._logger.info(
             "Comment #%s finished with status=%s. %s",
@@ -67,6 +76,27 @@ class TikTokPublishingMixin:
             details=outcome.details,
             status=outcome.status,
         )
+
+    def _confirm_comment_visible(self, page: Page, comment_text: str) -> bool:
+        normalized = " ".join(str(comment_text or "").split())
+        if not normalized:
+            return False
+
+        patterns = [normalized]
+        if len(normalized) > 40:
+            patterns.append(normalized[:40])
+
+        for _ in range(6):
+            self._wait_for_verification_if_needed(page)
+            for pattern in patterns:
+                try:
+                    locator = page.get_by_text(pattern, exact=False).first
+                    if locator.is_visible(timeout=700):
+                        return True
+                except (TimeoutError, Error):
+                    continue
+            page.wait_for_timeout(700)
+        return False
 
     def _activate_reply_mode(self, page: Page, target_username: str) -> Page:
         normalized_target = self._normalize_username(target_username)

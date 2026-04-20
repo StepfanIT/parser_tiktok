@@ -1,106 +1,201 @@
 # TikTok Parser MVP
 
-## Структура
+CLI tool for:
+- collecting comments from TikTok videos,
+- sending comments from one or many accounts,
+- running account health checks,
+- working with local Playwright profiles and anti-detect providers.
 
-- `main.py` - запуск CLI.
-- `app/cli.py` - меню та взаємодія з користувачем.
-- `app/services/comment_service.py` - сценарії збирання і надсилання.
-- `app/integrations/tiktok_client.py` - Playwright-інтеграція з TikTok.
-- `app/repositories/` - робота з JSON-конфігами акаунтів і CSV.
-- `data/accounts/` - конфіги акаунтів і профілі браузера.
-- `data/comments/outgoing_comments.csv` - приклад CSV для надсилання.
-- `exports/` - результати збирання.
-- `logs/app.log` - основний лог.
+---
 
-## Встановлення
+## 1) Project layout
 
+- `main.py` — app entrypoint.
+- `app/cli.py` — interactive menu and prompt flow.
+- `app/services/comment_service.py` — main business logic for collect/send/check.
+- `app/services/send_policy.py` — randomization + scheduling policy.
+- `app/integrations/tiktok_client_support/` — browser/session/comment interaction.
+- `app/repositories/` — account JSON + CSV load/save.
+- `data/accounts/` — account configs and browser profile data.
+- `data/comments/outgoing_comments.csv` — outgoing comments input CSV.
+- `exports/` — collected comments output CSVs.
+- `logs/app.log` — runtime logs.
+
+---
+
+## 2) Setup
+
+```bash
 python -m venv venv
 venv/Scripts/Activate.ps1
 pip install -r requirements.txt
+```
 
-## Запуск
+Run:
 
+```bash
 python main.py
+```
 
-## Конфіг акаунта
+---
 
-Кожен акаунт - це окремий JSON у `data/accounts/`.
+## 3) Menu navigation
 
-Поля:
+Main menu:
+1. Collect comments
+2. Send comments
+3. Account health check
+4. Exit
 
-- `name` - внутрішня назва акаунта.
-- `storage_state_path` - резервний storage state.
-- `user_data_dir` - постійний профіль браузера для цього акаунта.
-- `tiktok_username` - бажано вказати TikTok username без `@`, щоб точніше відсікати коментарі, де акаунт уже відповів.
-- `browser_type` - зазвичай `chromium`.
-- `browser_channel` - можна лишити `null`.
-- `headless` - краще `false`.
-- `slow_mo_ms` - невелика затримка для стабільності.
-- `login_url` - сторінка логіну.
-- `bootstrap_login_if_missing` - дозволяє вручну дологінитись у вже відкритому профілі.
+In most prompts you can type:
+- `0`
+- `back`
+- `menu`
+- `exit`
 
-## Режим з кількома акаунтами
+to return to the main menu.
 
-У меню для збирання або надсилання програма питає:
+---
 
-1. Працювати з одного акаунта чи з кількох.
-2. Скільки акаунтів використати.
-3. Які саме JSON-конфіги взяти.
+## 4) Account config
 
-Після цього кожен акаунт активується по черзі. Якщо десь потрібен логін або puzzle, його треба пройти у відкритому браузері. Лише після активації всіх вибраних акаунтів починається основна робота.
+Each account is a JSON file (example: `data/accounts/<alias>/account.json`).
 
-## CSV для надсилання
+Important fields:
+- `name` — internal alias (used in CSV restrictions).
+- `tiktok_username` — optional, recommended for better targeting/filtering.
+- `storage_state_path`, `user_data_dir` — session/profile persistence.
+- `bootstrap_login_if_missing` — allows manual login fallback.
+- `browser_provider` — provider settings (`playwright_local`, `dolphin_anty`, `adspower`).
 
-Обов'язкові колонки:
+### Provider secrets
+- Dolphin: `api_token` or `api_token_env` (`DOLPHIN_ANTY_TOKEN`).
+- AdsPower: `api_key` or `api_key_env` (`ADSPOWER_API_KEY`).
 
+If a secret is not written directly to JSON, env fallback is used.
+
+---
+
+## 5) Collection flow
+
+### Collection modes
+1. **All selected accounts on one video**
+2. **Each selected account on each listed video**
+
+In multi-video mode you can paste URLs:
+- comma-separated,
+- line-by-line.
+
+The service merges duplicate comments across passes/videos using `comment_id`.
+
+---
+
+## 6) Sending flow
+
+### Sending modes
+1. **Distribute rows across selected accounts**
+   - each CSV row is sent once globally (unless auto-switch rule below applies).
+2. **Each selected account sends all eligible rows**
+   - every selected account sends every eligible row.
+
+### Auto-switch rule (important)
+If CSV rows have **no account restrictions** (`account_name`, `allowed_accounts`, `eligible_accounts` are empty),
+the app automatically switches to **all-accounts mode**.
+
+### Concurrency
+When multiple accounts are eligible, batches are executed concurrently with a thread pool.
+If one account batch fails, other account batches continue, and failed rows are returned with `batch_error` status.
+
+---
+
+## 7) Outgoing CSV format
+
+File: `data/comments/outgoing_comments.csv`
+
+Required columns:
 - `video_url`
-- `comment_text`
+- one of: `comment_text` or `comment_texts`
 
-Необов'язкові:
-
+Optional columns:
 - `order`
 - `delay_seconds`
 - `account_name`
 - `allowed_accounts`
 - `eligible_accounts`
+- `target_username`
 
-`account_name` - швидкий спосіб прив'язати рядок до одного акаунта.
+### Field behavior
+- `account_name` — bind row to one account (supports account `name` or TikTok username alias).
+- `allowed_accounts` / `eligible_accounts` — list separated by `|` or comma.
+- `target_username` — when set, the bot tries to reply to a comment from that username.
 
-`allowed_accounts` або `eligible_accounts` - список назв акаунтів через `|` або кому, яким дозволено надсилати цей коментар.
+---
 
-## CSV після збирання
+## 8) Sending randomization and limits
 
-Кожен запуск створює новий файл у `exports/`, наприклад:
+Defaults live in `app/config.py` (`load_app_config()` → `SendBehaviorConfig`):
+- `daily_limit_min`, `daily_limit_max`
+- `hourly_limit_min`, `hourly_limit_max`
+- `batch_size_min`, `batch_size_max`
+- `batch_pause_min_seconds`, `batch_pause_max_seconds`
+- `comment_delay_choices`
 
-- `scraped_comments_20260415_101530.csv`
+Runtime policy logic is in `app/services/send_policy.py`:
+- random account limits,
+- random batch sizes,
+- random comment text variant,
+- random delay with jitter,
+- cooldown scheduling.
 
-У CSV є колонка `eligible_accounts` - це акаунти, які ще не відповіли на цей коментар і можуть працювати з ним далі.
+---
 
-## Що означає прокрутка 1/2/3 під час збирання
+## 9) Result statuses (send)
 
-Це не номер коментаря. Це номер проходу прокрутки секції коментарів.
+Common statuses you may see:
+- `posted` — API/UI flow reports success.
+- `posted_unverified` — API success but comment text was not confirmed in UI shortly after posting.
+- `publish_timeout` — publish response was not captured in time.
+- `batch_error` — account batch crashed; rows were marked failed and run continued.
 
-Приклад:
+> Note: TikTok moderation/shadow filtering can still hide comments publicly even if posting endpoint returns success.
 
-- `Прокрутка коментарів 1` - перша спроба підвантажити наступну порцію.
-- `Прокрутка коментарів 2` - друга спроба.
+---
 
-Тепер збір не обрізається жорстким лімітом проходів. Програма робить мінімум кілька прокруток, а далі продовжує, поки TikTok реально підвантажує нові коментарі.
+## 10) Manual login behavior
 
-## Ліміти надсилання
+If session is inactive:
+- browser opens login flow,
+- you log in manually,
+- app re-checks login state (with retries),
+- then continues.
 
-За замовчуванням зараз закладено безпечний режим для не нових акаунтів:
+If login still appears required after retries, that account fails health-check for the run.
 
-- приблизно `120-150` коментарів на день на акаунт
-- приблизно `12-18` коментарів на годину на акаунт
-- пачки по `5-12` коментарів
-- пауза між пачками `180-540` секунд
-- пауза між окремими коментарями випадкова з набору `3, 5, 7, 9, 11`
+---
 
-Якщо акаунти стабільно живуть без перевірок і реджектів, ці межі можна буде підняти окремо.
+## 11) Troubleshooting
 
-## Нотатки
+### “Comment input could not be found...”
+Possible reasons:
+- comments disabled on that video,
+- panel not opened due UI change,
+- temporary verification/challenge,
+- account restriction in current session.
 
-- Якщо TikTok показує puzzle або verification, його треба пройти вручну в браузері.
-- Якщо TikTok змінить DOM або селектори, може знадобитись невелике оновлення `app/integrations/tiktok_client.py`.
-- Якщо `tiktok_username` не вказаний, програма пробує визначити його сама, але для точного фільтра краще прописати вручну.
+### Posted but not visible in TikTok
+- could be moderation delay,
+- could be shadow filtering,
+- use text variants + slower cadence,
+- avoid blasting identical comments from many accounts at once.
+
+### Too many browser windows
+Session checks intentionally open profiles before main action so failures happen early.
+
+---
+
+## 12) Pre-delivery cleanup
+
+Before sharing project:
+- clean `logs/` and `exports/` if not needed,
+- remove local `venv/`, `__pycache__/`, `.pytest_cache/`,
+- remove real tokens/keys from account JSONs (prefer env variables).

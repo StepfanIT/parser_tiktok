@@ -18,14 +18,43 @@ class AccountRepository:
         if not self._config.accounts_dir.exists():
             return []
 
-        paths = [
+        candidates = [
             path
             for path in sorted(self._config.accounts_dir.rglob("*.json"))
             if path.is_file()
             and "storage_state" not in path.name.lower()
             and not path.name.lower().endswith(".local.json")
         ]
-        return paths
+        return [path for path in candidates if self._looks_like_account_config(path)]
+
+    def resolve_account_identifier(self, identifier: str) -> Path | None:
+        raw_value = str(identifier or "").strip()
+        if not raw_value:
+            return None
+
+        direct_path = Path(raw_value)
+        if not direct_path.is_absolute():
+            direct_path = self._config.project_root / direct_path
+        if direct_path.exists() and self._looks_like_account_config(direct_path):
+            return direct_path
+
+        normalized = raw_value.lower()
+        for path in self.list_account_paths():
+            if str(path).lower() == normalized:
+                return path
+            if path.stem.lower() == normalized:
+                return path
+            if path.parent.name.lower() == normalized:
+                return path
+
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            account_name = str(payload.get("name") or "").strip().lower()
+            if account_name and account_name == normalized:
+                return path
+        return None
 
     def load_account(self, account_path: Path | None = None) -> TikTokAccountConfig:
         target_path = account_path or self._config.default_account_path
@@ -123,6 +152,16 @@ class AccountRepository:
             if raw_name:
                 names.add(raw_name.lower())
         return names
+
+    def _looks_like_account_config(self, path: Path) -> bool:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+        required_keys = {"name", "storage_state_path", "user_data_dir", "browser_provider"}
+        return required_keys.issubset(payload.keys())
 
     def _build_browser_provider_payload(
         self,
