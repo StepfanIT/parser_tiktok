@@ -189,6 +189,7 @@ class TikTokCommentService:
         *,
         account_paths: list[Path] | None = None,
         csv_path: Path | None = None,
+        mode: str = "distribute",
     ) -> list[SendResult]:
         accounts, health_results = self._health_service.check_accounts(account_paths)
         summaries = self._build_run_summaries(health_results)
@@ -200,6 +201,27 @@ class TikTokCommentService:
 
         pending_comments = self._normalize_comment_account_restrictions(pending_comments, accounts)
         self._validate_comment_account_restrictions(pending_comments, accounts)
+        if mode == "distribute" and all(
+            not comment.allowed_account_names for comment in pending_comments
+        ):
+            self._logger.info(
+                "No account restrictions found in CSV. Switching send mode to all_accounts automatically."
+            )
+            mode = "all_accounts"
+
+        if mode == "all_accounts":
+            results = self._send_comments_for_all_accounts(
+                accounts=accounts,
+                pending_comments=pending_comments,
+                summaries=summaries,
+            )
+            self._logger.info(
+                "Sending finished (all_accounts mode). Successful comments: %s/%s.",
+                sum(1 for result in results if result.success),
+                len(results),
+            )
+            return results
+
         rng = random.Random()
         pending_pool = pending_comments.copy()
         rng.shuffle(pending_pool)
@@ -336,6 +358,82 @@ class TikTokCommentService:
         account_logger = get_account_logger(self._logger, state.account.name)
         client = TikTokPlaywrightClient(self._config, account_logger, state.account)
         return client.send_comments(batch)
+
+    def _send_comments_for_all_accounts(
+        self,
+        *,
+        accounts: list[TikTokAccountConfig],
+        pending_comments: list[OutgoingComment],
+        summaries: dict[str, RunAccountSummary],
+    ) -> list[SendResult]:
+        prepared_batches: list[tuple[TikTokAccountConfig, list[OutgoingComment]]] = []
+        for index, account in enumerate(accounts):
+            account_comments = [
+                comment for comment in pending_comments if self._send_policy.comment_matches_account(comment, account)
+            ]
+            if not account_comments:
+                continue
+
+            rng = random.Random(f"{account.name}:{index}:{len(account_comments)}")
+            rng.shuffle(account_comments)
+            prepared: list[OutgoingComment] = []
+            for comment in account_comments:
+                prepared.append(
+                    replace(
+                        comment,
+                        text=self._send_policy.resolve_comment_text(comment, rng),
+                        delay_seconds=comment.delay_seconds
+                        if comment.delay_seconds > 0
+                        else self._send_policy.resolve_delay_seconds(rng),
+                    )
+                )
+            prepared_batches.append((account, prepared))
+
+        if not prepared_batches:
+            raise TikTokClientError("No eligible comment rows matched selected accounts.")
+
+        results: list[SendResult] = []
+        max_workers = max(1, min(len(prepared_batches), 6))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {
+                executor.submit(self._send_comments_for_account_batch, account, comments): (account, comments)
+                for account, comments in prepared_batches
+            }
+            for future in as_completed(future_map):
+                account, comments = future_map[future]
+                account_results = future.result()
+                results.extend(account_results)
+
+                successful_count = sum(1 for item in account_results if item.success)
+                attempts_count = len(account_results)
+                summaries[account.name] = replace(
+                    summaries[account.name],
+                    attempted_comments=summaries[account.name].attempted_comments + attempts_count,
+                    successful_comments=summaries[account.name].successful_comments + successful_count,
+                    failed_comments=summaries[account.name].failed_comments + (attempts_count - successful_count),
+                    statuses=summaries[account.name].statuses + tuple(item.status for item in account_results),
+                )
+                account_logger = get_account_logger(self._logger, account.name)
+                account_logger.info(
+                    "Finished all_accounts mode. Successful sends: %s/%s.",
+                    successful_count,
+                    attempts_count,
+                )
+
+        return results
+
+    def _send_comments_for_account_batch(
+        self,
+        account: TikTokAccountConfig,
+        comments: list[OutgoingComment],
+    ) -> list[SendResult]:
+        account_logger = get_account_logger(self._logger, account.name)
+        account_logger.info(
+            "Starting all_accounts mode for %s comments.",
+            len(comments),
+        )
+        client = TikTokPlaywrightClient(self._config, account_logger, account)
+        return client.send_comments(comments)
 
     def _merge_scraped_comments(self, left: ScrapedComment, right: ScrapedComment) -> ScrapedComment:
         eligible_accounts = tuple(

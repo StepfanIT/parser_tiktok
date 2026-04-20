@@ -80,6 +80,8 @@ Field behavior:
 - `allowed_accounts` / `eligible_accounts`: account list separated by `|` or comma.
 - `target_username`: target comment author username on the video (without `@`).
 
+If neither `account_name` nor `allowed_accounts`/`eligible_accounts` is provided, the app treats rows as shared and each selected account sends all rows (all-accounts mode).
+
 ## Collection modes
 
 In collection mode you can choose:

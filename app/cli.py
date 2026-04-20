@@ -101,9 +101,11 @@ class TikTokCli:
                 default=self._config.default_outgoing_comments_csv,
             )
             account_paths = self._prompt_account_paths(action_label="sending")
+            send_mode = self._prompt_send_mode()
             results = self._service.send_comments(
                 account_paths=account_paths,
                 csv_path=csv_path,
+                mode=send_mode,
             )
             success_count = sum(1 for result in results if result.success)
             print(
@@ -233,6 +235,17 @@ class TikTokCli:
             print(self._paint("Unknown mode. Falling back to one video mode.", YELLOW))
             return "1"
         return mode
+
+    def _prompt_send_mode(self) -> str:
+        print("Sending mode:")
+        print("1. Distribute rows across selected accounts (total rows are sent once)")
+        print("2. Each selected account sends all eligible rows")
+        print("0. Back to main menu")
+        mode = input("Select mode [0-2]: ").strip() or "1"
+        self._raise_if_back_requested(mode)
+        if mode == "2":
+            return "all_accounts"
+        return "distribute"
 
     def _prompt_required_video_url(self) -> str:
         video_url = input("TikTok video URL: ").strip()
