@@ -1,18 +1,29 @@
 # TikTok Parser MVP
 
-## Structure
+CLI tool for:
+- collecting comments from TikTok videos,
+- sending comments from one or many accounts,
+- running account health checks,
+- working with local Playwright profiles and anti-detect providers.
 
-- `main.py` - CLI entrypoint.
-- `app/cli.py` - menu flow and user interaction.
-- `app/services/comment_service.py` - collection and sending scenarios.
-- `app/integrations/tiktok_client.py` - Playwright TikTok integration.
-- `app/repositories/` - JSON account config and CSV I/O.
-- `data/accounts/` - account configs and browser profiles.
-- `data/comments/outgoing_comments.csv` - sample CSV for sending comments.
-- `exports/` - collected comments output.
-- `logs/app.log` - main runtime log.
+---
 
-## Setup
+## 1) Project layout
+
+- `main.py` — app entrypoint.
+- `app/cli.py` — interactive menu and prompt flow.
+- `app/services/comment_service.py` — main business logic for collect/send/check.
+- `app/services/send_policy.py` — randomization + scheduling policy.
+- `app/integrations/tiktok_client_support/` — browser/session/comment interaction.
+- `app/repositories/` — account JSON + CSV load/save.
+- `data/accounts/` — account configs and browser profile data.
+- `data/comments/outgoing_comments.csv` — outgoing comments input CSV.
+- `exports/` — collected comments output CSVs.
+- `logs/app.log` — runtime logs.
+
+---
+
+## 2) Setup
 
 ```bash
 python -m venv venv
@@ -20,53 +31,92 @@ venv/Scripts/Activate.ps1
 pip install -r requirements.txt
 ```
 
-## Run
+Run:
 
 ```bash
 python main.py
 ```
 
-## Menu navigation
+---
 
-In most interactive prompts you can type `0`, `back`, `menu`, or `exit` to return to the main menu.
+## 3) Menu navigation
 
-## Account config
+Main menu:
+1. Collect comments
+2. Send comments
+3. Account health check
+4. Exit
 
-Each account is a separate JSON file inside `data/accounts/`.
+In most prompts you can type:
+- `0`
+- `back`
+- `menu`
+- `exit`
 
-Main fields:
+to return to the main menu.
 
-- `name` - internal account alias used in CSV restrictions.
-- `storage_state_path` - backup storage state path.
-- `user_data_dir` - persistent browser profile directory.
-- `tiktok_username` - recommended without `@` for better reply filtering.
-- `browser_type` - usually `chromium`.
-- `browser_channel` - optional browser channel.
-- `headless` - usually `false`.
-- `slow_mo_ms` - small delay for stability.
-- `login_url` - TikTok login page.
-- `bootstrap_login_if_missing` - allows manual login in opened profile when session is missing.
+---
 
-## Multi-account flow
+## 4) Account config
 
-For collection/sending/health-check, the CLI asks:
+Each account is a JSON file (example: `data/accounts/<alias>/account.json`).
 
-1. Single or multiple accounts.
-2. How many accounts to use.
-3. Use saved accounts first or choose/create each slot manually.
-4. For anti-detect accounts, select provider preset and profile IDs.
+Important fields:
+- `name` — internal alias (used in CSV restrictions).
+- `tiktok_username` — optional, recommended for better targeting/filtering.
+- `storage_state_path`, `user_data_dir` — session/profile persistence.
+- `bootstrap_login_if_missing` — allows manual login fallback.
+- `browser_provider` — provider settings (`playwright_local`, `dolphin_anty`, `adspower`).
 
-Each selected account is session-checked before the main action starts.
+### Provider secrets
+- Dolphin: `api_token` or `api_token_env` (`DOLPHIN_ANTY_TOKEN`).
+- AdsPower: `api_key` or `api_key_env` (`ADSPOWER_API_KEY`).
 
-## Outgoing CSV format
+If a secret is not written directly to JSON, env fallback is used.
+
+---
+
+## 5) Collection flow
+
+### Collection modes
+1. **All selected accounts on one video**
+2. **Each selected account on each listed video**
+
+In multi-video mode you can paste URLs:
+- comma-separated,
+- line-by-line.
+
+The service merges duplicate comments across passes/videos using `comment_id`.
+
+---
+
+## 6) Sending flow
+
+### Sending modes
+1. **Distribute rows across selected accounts**
+   - each CSV row is sent once globally (unless auto-switch rule below applies).
+2. **Each selected account sends all eligible rows**
+   - every selected account sends every eligible row.
+
+### Auto-switch rule (important)
+If CSV rows have **no account restrictions** (`account_name`, `allowed_accounts`, `eligible_accounts` are empty),
+the app automatically switches to **all-accounts mode**.
+
+### Concurrency
+When multiple accounts are eligible, batches are executed concurrently with a thread pool.
+If one account batch fails, other account batches continue, and failed rows are returned with `batch_error` status.
+
+---
+
+## 7) Outgoing CSV format
+
+File: `data/comments/outgoing_comments.csv`
 
 Required columns:
-
 - `video_url`
-- one text column: `comment_text` or `comment_texts`
+- one of: `comment_text` or `comment_texts`
 
 Optional columns:
-
 - `order`
 - `delay_seconds`
 - `account_name`
@@ -74,46 +124,78 @@ Optional columns:
 - `eligible_accounts`
 - `target_username`
 
-Field behavior:
+### Field behavior
+- `account_name` — bind row to one account (supports account `name` or TikTok username alias).
+- `allowed_accounts` / `eligible_accounts` — list separated by `|` or comma.
+- `target_username` — when set, the bot tries to reply to a comment from that username.
 
-- `account_name`: bind row to one account. You can use account config `name` or TikTok `username`.
-- `allowed_accounts` / `eligible_accounts`: account list separated by `|` or comma.
-- `target_username`: target comment author username on the video (without `@`).
+---
 
-If neither `account_name` nor `allowed_accounts`/`eligible_accounts` is provided, the app treats rows as shared and each selected account sends all rows (all-accounts mode).
+## 8) Sending randomization and limits
 
-## Collection modes
-
-In collection mode you can choose:
-
-1. All selected accounts on one video.
-2. Each selected account on each listed video.
-
-For multi-video mode, you can paste URLs comma-separated or line-by-line.
-
-## Where to change sending limits
-
-All default sending limits are in `app/config.py` in `load_app_config()`, inside `SendBehaviorConfig`:
-
+Defaults live in `app/config.py` (`load_app_config()` → `SendBehaviorConfig`):
 - `daily_limit_min`, `daily_limit_max`
 - `hourly_limit_min`, `hourly_limit_max`
 - `batch_size_min`, `batch_size_max`
 - `batch_pause_min_seconds`, `batch_pause_max_seconds`
 - `comment_delay_choices`
 
-Adjust these values directly and restart the CLI.
+Runtime policy logic is in `app/services/send_policy.py`:
+- random account limits,
+- random batch sizes,
+- random comment text variant,
+- random delay with jitter,
+- cooldown scheduling.
 
-## Randomization behavior
+---
 
-Random send scheduling is controlled by `app/services/send_policy.py`:
+## 9) Result statuses (send)
 
-- random per-account daily/hourly limits
-- random batch sizes
-- random comment text variant selection
-- random per-comment delay (base interval + jitter)
-- random cooldown between batches
+Common statuses you may see:
+- `posted` — API/UI flow reports success.
+- `posted_unverified` — API success but comment text was not confirmed in UI shortly after posting.
+- `publish_timeout` — publish response was not captured in time.
+- `batch_error` — account batch crashed; rows were marked failed and run continued.
 
-## Notes
+> Note: TikTok moderation/shadow filtering can still hide comments publicly even if posting endpoint returns success.
 
-- If TikTok shows puzzle/verification, solve it manually in the opened browser.
-- If TikTok changes selectors/DOM, integration selectors may need updates.
+---
+
+## 10) Manual login behavior
+
+If session is inactive:
+- browser opens login flow,
+- you log in manually,
+- app re-checks login state (with retries),
+- then continues.
+
+If login still appears required after retries, that account fails health-check for the run.
+
+---
+
+## 11) Troubleshooting
+
+### “Comment input could not be found...”
+Possible reasons:
+- comments disabled on that video,
+- panel not opened due UI change,
+- temporary verification/challenge,
+- account restriction in current session.
+
+### Posted but not visible in TikTok
+- could be moderation delay,
+- could be shadow filtering,
+- use text variants + slower cadence,
+- avoid blasting identical comments from many accounts at once.
+
+### Too many browser windows
+Session checks intentionally open profiles before main action so failures happen early.
+
+---
+
+## 12) Pre-delivery cleanup
+
+Before sharing project:
+- clean `logs/` and `exports/` if not needed,
+- remove local `venv/`, `__pycache__/`, `.pytest_cache/`,
+- remove real tokens/keys from account JSONs (prefer env variables).
