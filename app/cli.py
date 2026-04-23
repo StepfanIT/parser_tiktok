@@ -522,7 +522,7 @@ class TikTokCli:
 
     def _prompt_optional_2fa_bundle(self) -> tuple[str | None, str | None, str | None]:
         raw_value = input(
-            "TikTok auth bundle [username|password|2FA_secret] (Enter to skip): "
+            "TikTok auth bundle [username|password|2FA_secret] (Enter to skip and use manual login): "
         ).strip()
         self._raise_if_back_requested(raw_value)
         if not raw_value:

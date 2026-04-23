@@ -110,8 +110,8 @@ class TikTokSessionMixin:
         except (TimeoutError, Error) as error:
             raise TikTokClientError(f"Failed to open the TikTok login page: {error}") from error
 
-        auto_login_used = self._try_auto_login_with_2fa_bundle(page)
-        if auto_login_used:
+        auto_login_attempted = self._try_auto_login_with_2fa_bundle(page)
+        if auto_login_attempted:
             page.wait_for_timeout(2_000)
             self._dismiss_overlays(page)
             self._wait_for_verification_if_needed(page)
@@ -121,6 +121,10 @@ class TikTokSessionMixin:
                     page = self._goto_with_retry(page, return_url, wait_until="domcontentloaded")
                     page.wait_for_timeout(3_000)
                 return page
+            self._logger.warning(
+                "Saved auth bundle was attempted, but TikTok still requires login "
+                "(captcha/challenge/invalid credentials are possible)."
+            )
 
         for attempt in range(1, 4):
             print()
@@ -162,6 +166,7 @@ class TikTokSessionMixin:
         if not username or not password or not totp_secret:
             return False
 
+        self._open_login_username_flow_if_needed(page)
         self._logger.info("Attempting auto-login via saved username/password/2FA secret.")
         if not self._fill_first_visible(
             page,
@@ -169,10 +174,12 @@ class TikTokSessionMixin:
                 'input[name="username"]',
                 'input[name="email"]',
                 'input[autocomplete="username"]',
+                'input[inputmode="email"]',
                 'input[type="text"]',
             ],
             username,
         ):
+            self._logger.info("Auto-login skipped: username field is not available on this screen.")
             return False
 
         if not self._fill_first_visible(
@@ -184,6 +191,7 @@ class TikTokSessionMixin:
             ],
             password,
         ):
+            self._logger.info("Auto-login skipped: password field is not available on this screen.")
             return False
 
         if not self._click_first_visible(
@@ -191,22 +199,20 @@ class TikTokSessionMixin:
             [
                 'button[type="submit"]',
                 'button:has-text("Log in")',
+                'button:has-text("Log in with password")',
                 'button:has-text("Continue")',
             ],
         ):
+            self._logger.info("Auto-login skipped: submit button was not found.")
             return False
 
-        page.wait_for_timeout(2_500)
+        page.wait_for_timeout(3_000)
         code = self._generate_totp_code(totp_secret)
-        if code and self._fill_first_visible(
-            page,
-            [
-                'input[autocomplete="one-time-code"]',
-                'input[name*="code" i]',
-                'input[type="tel"]',
-            ],
-            code,
-        ):
+        if not code:
+            self._logger.warning("Could not generate a TOTP code from saved 2FA secret.")
+            return True
+
+        if self._fill_totp_code_if_prompted(page, code):
             self._click_first_visible(
                 page,
                 [
@@ -216,6 +222,59 @@ class TikTokSessionMixin:
                 ],
             )
         return True
+
+    def _open_login_username_flow_if_needed(self, page: Page) -> None:
+        self._click_first_visible(
+            page,
+            [
+                'a[href*="/login/phone-or-email"]',
+                'a:has-text("Use phone / email / username")',
+                'button:has-text("Use phone / email / username")',
+                'span:has-text("Use phone / email / username")',
+            ],
+        )
+        page.wait_for_timeout(700)
+        self._click_first_visible(
+            page,
+            [
+                'a:has-text("Log in with email or username")',
+                'button:has-text("Log in with email or username")',
+                'span:has-text("Log in with email or username")',
+            ],
+        )
+        page.wait_for_timeout(700)
+
+    def _fill_totp_code_if_prompted(self, page: Page, code: str) -> bool:
+        if self._fill_first_visible(
+            page,
+            [
+                'input[autocomplete="one-time-code"]',
+                'input[name*="code" i]',
+                'input[type="tel"]',
+            ],
+            code,
+        ):
+            return True
+
+        otp_locators = [
+            page.locator('input[inputmode="numeric"][maxlength="1"]'),
+            page.locator('input[aria-label*="digit" i]'),
+            page.locator('input[name^="digit"]'),
+        ]
+        for locator in otp_locators:
+            try:
+                count = locator.count()
+            except Error:
+                continue
+            if count < 4:
+                continue
+            try:
+                for idx, symbol in enumerate(code):
+                    locator.nth(idx).fill(symbol, timeout=2_000)
+                return True
+            except (TimeoutError, Error):
+                continue
+        return False
 
     def _fill_first_visible(self, page: Page, selectors: list[str], value: str) -> bool:
         for selector in selectors:
