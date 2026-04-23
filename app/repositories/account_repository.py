@@ -89,6 +89,9 @@ class AccountRepository:
         api_url: str | None = None,
         api_token: str | None = None,
         api_key: str | None = None,
+        login_username: str | None = None,
+        login_password: str | None = None,
+        login_totp_secret: str | None = None,
     ) -> Path:
         normalized_account_name = self._allocate_unique_name(account_name)
         folder_name = self._allocate_unique_folder_name(normalized_account_name)
@@ -107,6 +110,9 @@ class AccountRepository:
             "slow_mo_ms": 150,
             "login_url": "https://www.tiktok.com/login",
             "bootstrap_login_if_missing": True,
+            "login_username": login_username,
+            "login_password": login_password,
+            "login_totp_secret": login_totp_secret,
             "browser_provider": self._build_browser_provider_payload(
                 provider_name=provider_name,
                 profile_id=profile_id,

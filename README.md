@@ -74,6 +74,13 @@ Important fields:
 
 If a secret is not written directly to JSON, env fallback is used.
 
+### Optional TikTok auto-login bundle (username + password + 2FA)
+During account creation, you can also provide:
+
+`username|password|2FA_secret`
+
+If this bundle is set, the session flow will try to auto-fill login credentials and submit a TOTP code before falling back to manual login.
+
 ---
 
 ## 5) Collection flow
@@ -85,6 +92,8 @@ If a secret is not written directly to JSON, env fallback is used.
 In multi-video mode you can paste URLs:
 - comma-separated,
 - line-by-line.
+
+Then you can choose exactly how many video URLs should be used, and the CLI will request missing URLs if needed.
 
 The service merges duplicate comments across passes/videos using `comment_id`.
 

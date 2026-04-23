@@ -269,19 +269,26 @@ class TikTokCli:
             fallback = input("TikTok video URL: ").strip()
             self._raise_if_back_requested(fallback)
             return [fallback] if fallback else []
-
+        requested_count = self._prompt_positive_int("How many video URLs to use", default=len(chunks))
         merged = ",".join(chunks).replace("\n", ",")
-        values = [item.strip() for item in merged.split(",")]
+        values = [item.strip() for item in merged.split(",") if item.strip()]
+        while len(values) < requested_count:
+            next_url = input(f"Video URL #{len(values) + 1}: ").strip()
+            self._raise_if_back_requested(next_url)
+            if not next_url:
+                continue
+            values.append(next_url)
+
         unique_urls: list[str] = []
         seen: set[str] = set()
         for url in values:
-            if not url:
-                continue
             key = url.lower()
             if key in seen:
                 continue
             seen.add(key)
             unique_urls.append(url)
+            if len(unique_urls) >= requested_count:
+                break
         return unique_urls
 
     def _prompt_optional_path(
@@ -448,6 +455,7 @@ class TikTokCli:
         profile_id: str | None = None
         if provider_name != "playwright_local":
             profile_id = self._prompt_required_text("Profile ID")
+        login_username, login_password, login_totp_secret = self._prompt_optional_2fa_bundle()
 
         config_path = self._service.create_account_config(
             account_name=account_name,
@@ -456,6 +464,9 @@ class TikTokCli:
             api_url=api_url,
             api_token=api_token,
             api_key=api_key,
+            login_username=login_username,
+            login_password=login_password,
+            login_totp_secret=login_totp_secret,
         )
         print(self._paint(f"Created config: {config_path}", GREEN))
         self._print_provider_secret_hint(provider_name, config_path, api_token=api_token, api_key=api_key)
@@ -508,6 +519,19 @@ class TikTokCli:
         source_choice = input("Select source [0-2]: ").strip() or "1"
         self._raise_if_back_requested(source_choice)
         return source_choice
+
+    def _prompt_optional_2fa_bundle(self) -> tuple[str | None, str | None, str | None]:
+        raw_value = input(
+            "TikTok auth bundle [username|password|2FA_secret] (Enter to skip): "
+        ).strip()
+        self._raise_if_back_requested(raw_value)
+        if not raw_value:
+            return None, None, None
+
+        parts = [part.strip() for part in raw_value.split("|")]
+        if len(parts) != 3 or not all(parts):
+            raise ValueError("Auth bundle must be in format username|password|2FA_secret.")
+        return parts[0], parts[1], parts[2]
 
     def _resolve_account_provider_settings(
         self,

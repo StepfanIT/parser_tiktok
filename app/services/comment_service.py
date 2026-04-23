@@ -68,6 +68,9 @@ class TikTokCommentService:
         api_url: str | None = None,
         api_token: str | None = None,
         api_key: str | None = None,
+        login_username: str | None = None,
+        login_password: str | None = None,
+        login_totp_secret: str | None = None,
     ) -> Path:
         return self._account_repository.create_account_config(
             account_name=account_name,
@@ -76,6 +79,9 @@ class TikTokCommentService:
             api_url=api_url,
             api_token=api_token,
             api_key=api_key,
+            login_username=login_username,
+            login_password=login_password,
+            login_totp_secret=login_totp_secret,
         )
 
     def ensure_account_session(self, *, account_path: Path) -> AccountHealthCheckResult:

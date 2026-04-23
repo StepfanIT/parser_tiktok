@@ -69,6 +69,9 @@ class TikTokAccountConfig:
     slow_mo_ms: int = 150
     login_url: str = "https://www.tiktok.com/login"
     bootstrap_login_if_missing: bool = True
+    login_username: str | None = None
+    login_password: str | None = None
+    login_totp_secret: str | None = None
     browser_provider: BrowserProviderConfig = field(default_factory=BrowserProviderConfig)
 
     @classmethod
@@ -97,6 +100,11 @@ class TikTokAccountConfig:
             slow_mo_ms=int(payload.get("slow_mo_ms", 150)),
             login_url=str(payload.get("login_url", "https://www.tiktok.com/login")),
             bootstrap_login_if_missing=bool(payload.get("bootstrap_login_if_missing", True)),
+            login_username=str(payload["login_username"]).strip() if payload.get("login_username") else None,
+            login_password=str(payload["login_password"]).strip() if payload.get("login_password") else None,
+            login_totp_secret=str(payload["login_totp_secret"]).strip()
+            if payload.get("login_totp_secret")
+            else None,
             browser_provider=BrowserProviderConfig.from_dict(payload.get("browser_provider")),
         )
 

@@ -9,6 +9,9 @@
   "slow_mo_ms": 150,
   "login_url": "https://www.tiktok.com/login",
   "bootstrap_login_if_missing": true,
+  "login_username": null,
+  "login_password": null,
+  "login_totp_secret": null,
   "browser_provider": {
     "name": "playwright_local",
     "profile_id": null,
