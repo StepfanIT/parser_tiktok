@@ -336,6 +336,7 @@ class TikTokCli:
             "How many accounts should be used",
             default=max(2, min(max(len(available_paths), 2), 3)),
         )
+        preset = self._prompt_multi_account_creation_preset()
         selected_paths: list[Path] = []
         use_saved_choice = self._prompt_multi_account_source_choice(has_saved=bool(available_paths))
         if use_saved_choice == "1":
