@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import base64
+import hashlib
+import hmac
 import re
+import struct
 import time
 from typing import Any
 
@@ -105,18 +109,44 @@ class TikTokSessionMixin:
             page = self._goto_with_retry(page, self._account.login_url, wait_until="domcontentloaded")
         except (TimeoutError, Error) as error:
             raise TikTokClientError(f"Failed to open the TikTok login page: {error}") from error
-        print()
-        print("The TikTok session is inactive or expired.")
-        print("Sign in to TikTok manually in the already opened browser profile.")
-        input("Press Enter here after the login succeeds to continue... ")
 
-        page.wait_for_timeout(1_500)
-        self._dismiss_overlays(page)
-        self._wait_for_verification_if_needed(page)
-        if self._is_login_required(page):
-            raise TikTokLoginRequiredError(
-                "TikTok still requires login after the manual sign-in step."
+        auto_login_attempted = self._try_auto_login_with_2fa_bundle(page)
+        if auto_login_attempted:
+            page.wait_for_timeout(2_000)
+            self._dismiss_overlays(page)
+            self._wait_for_verification_if_needed(page)
+            if not self._is_login_required(page):
+                self._persist_storage_state(page.context)
+                if return_url:
+                    page = self._goto_with_retry(page, return_url, wait_until="domcontentloaded")
+                    page.wait_for_timeout(3_000)
+                return page
+            self._logger.warning(
+                "Saved auth bundle was attempted, but TikTok still requires login "
+                "(captcha/challenge/invalid credentials are possible)."
             )
+
+        for attempt in range(1, 4):
+            print()
+            print("The TikTok session is inactive or expired.")
+            print("Sign in to TikTok manually in the already opened browser profile.")
+            if attempt > 1:
+                print(
+                    "TikTok still shows login required. "
+                    "Finish captcha/2FA and press Enter to re-check."
+                )
+            input("Press Enter here after the login succeeds to continue... ")
+
+            page.wait_for_timeout(2_000)
+            self._dismiss_overlays(page)
+            self._wait_for_verification_if_needed(page)
+            if not self._is_login_required(page):
+                break
+
+            if attempt == 3:
+                raise TikTokLoginRequiredError(
+                    "TikTok still requires login after multiple manual sign-in checks."
+                )
 
         self._persist_storage_state(page.context)
         if return_url:
@@ -128,6 +158,165 @@ class TikTokSessionMixin:
                 ) from error
             page.wait_for_timeout(3_000)
         return page
+
+    def _try_auto_login_with_2fa_bundle(self, page: Page) -> bool:
+        username = (self._account.login_username or "").strip()
+        password = (self._account.login_password or "").strip()
+        totp_secret = (self._account.login_totp_secret or "").strip()
+        if not username or not password or not totp_secret:
+            return False
+
+        self._open_login_username_flow_if_needed(page)
+        self._logger.info("Attempting auto-login via saved username/password/2FA secret.")
+        if not self._fill_first_visible(
+            page,
+            [
+                'input[name="username"]',
+                'input[name="email"]',
+                'input[autocomplete="username"]',
+                'input[inputmode="email"]',
+                'input[type="text"]',
+            ],
+            username,
+        ):
+            self._logger.info("Auto-login skipped: username field is not available on this screen.")
+            return False
+
+        if not self._fill_first_visible(
+            page,
+            [
+                'input[name="password"]',
+                'input[autocomplete="current-password"]',
+                'input[type="password"]',
+            ],
+            password,
+        ):
+            self._logger.info("Auto-login skipped: password field is not available on this screen.")
+            return False
+
+        if not self._click_first_visible(
+            page,
+            [
+                'button[type="submit"]',
+                'button:has-text("Log in")',
+                'button:has-text("Log in with password")',
+                'button:has-text("Continue")',
+            ],
+        ):
+            self._logger.info("Auto-login skipped: submit button was not found.")
+            return False
+
+        page.wait_for_timeout(3_000)
+        code = self._generate_totp_code(totp_secret)
+        if not code:
+            self._logger.warning("Could not generate a TOTP code from saved 2FA secret.")
+            return True
+
+        if self._fill_totp_code_if_prompted(page, code):
+            self._click_first_visible(
+                page,
+                [
+                    'button[type="submit"]',
+                    'button:has-text("Verify")',
+                    'button:has-text("Continue")',
+                ],
+            )
+        return True
+
+    def _open_login_username_flow_if_needed(self, page: Page) -> None:
+        self._click_first_visible(
+            page,
+            [
+                'a[href*="/login/phone-or-email"]',
+                'a:has-text("Use phone / email / username")',
+                'button:has-text("Use phone / email / username")',
+                'span:has-text("Use phone / email / username")',
+            ],
+        )
+        page.wait_for_timeout(700)
+        self._click_first_visible(
+            page,
+            [
+                'a:has-text("Log in with email or username")',
+                'button:has-text("Log in with email or username")',
+                'span:has-text("Log in with email or username")',
+            ],
+        )
+        page.wait_for_timeout(700)
+
+    def _fill_totp_code_if_prompted(self, page: Page, code: str) -> bool:
+        if self._fill_first_visible(
+            page,
+            [
+                'input[autocomplete="one-time-code"]',
+                'input[name*="code" i]',
+                'input[type="tel"]',
+            ],
+            code,
+        ):
+            return True
+
+        otp_locators = [
+            page.locator('input[inputmode="numeric"][maxlength="1"]'),
+            page.locator('input[aria-label*="digit" i]'),
+            page.locator('input[name^="digit"]'),
+        ]
+        for locator in otp_locators:
+            try:
+                count = locator.count()
+            except Error:
+                continue
+            if count < 4:
+                continue
+            try:
+                for idx, symbol in enumerate(code):
+                    locator.nth(idx).fill(symbol, timeout=2_000)
+                return True
+            except (TimeoutError, Error):
+                continue
+        return False
+
+    def _fill_first_visible(self, page: Page, selectors: list[str], value: str) -> bool:
+        for selector in selectors:
+            locator = page.locator(selector).first
+            try:
+                if locator.count() == 0 or not locator.is_visible(timeout=800):
+                    continue
+                locator.fill(value, timeout=2_000)
+                return True
+            except (TimeoutError, Error):
+                continue
+        return False
+
+    def _click_first_visible(self, page: Page, selectors: list[str]) -> bool:
+        for selector in selectors:
+            locator = page.locator(selector).first
+            try:
+                if locator.count() == 0 or not locator.is_visible(timeout=800):
+                    continue
+                locator.click(timeout=2_000)
+                return True
+            except (TimeoutError, Error):
+                continue
+        return False
+
+    @staticmethod
+    def _generate_totp_code(secret: str) -> str | None:
+        normalized = str(secret or "").strip().replace(" ", "").upper()
+        if not normalized:
+            return None
+        padding = "=" * ((8 - len(normalized) % 8) % 8)
+        try:
+            key = base64.b32decode(normalized + padding, casefold=True)
+        except Exception:
+            return None
+
+        timestep = int(time.time() // 30)
+        counter = struct.pack(">Q", timestep)
+        digest = hmac.new(key, counter, hashlib.sha1).digest()
+        offset = digest[-1] & 0x0F
+        binary = struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF
+        return str(binary % 1_000_000).zfill(6)
 
     def _goto_with_retry(self, page: Page, url: str, *, wait_until: str) -> Page:
         wait_strategies = [wait_until, "commit", "commit"]

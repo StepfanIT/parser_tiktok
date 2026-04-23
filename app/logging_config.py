@@ -82,13 +82,17 @@ class PrettyConsoleFormatter(logging.Formatter):
         level_color = SUCCESS_COLOR if is_success else LEVEL_COLORS.get(record.levelno, "38;5;252")
         level = self._colorize(level_color, f"{level_label:<8}")
         account_name = str(getattr(record, "account_name", "SYSTEM"))
-        account = self._colorize(self._account_color(account_name), f"{account_name:<14}")
+        account_color = self._account_color(account_name)
+        account = self._colorize(account_color, f"{account_name:<14}")
         logger_name = self._colorize("38;5;245", f"{record.name:<22}")
 
         if record.exc_info:
             message = f"{message}\n{self.formatException(record.exc_info)}"
         elif record.stack_info:
             message = f"{message}\n{self.formatStack(record.stack_info)}"
+
+        if account_name != "SYSTEM":
+            message = self._colorize(account_color, message)
 
         return f"{timestamp} | {level} | {account} | {logger_name} | {message}"
 

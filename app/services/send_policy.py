@@ -80,6 +80,8 @@ class SendExecutionPolicy:
         pending_pool: list[OutgoingComment],
         state: AccountSendState,
         rng: random.Random,
+        *,
+        max_batch_size_cap: int | None = None,
     ) -> list[OutgoingComment]:
         eligible_comments = [
             comment for comment in pending_pool if self.comment_matches_account(comment, state.account)
@@ -93,6 +95,8 @@ class SendExecutionPolicy:
                 self._config.send_behavior.batch_size_max,
             ),
         )
+        if max_batch_size_cap is not None:
+            max_batch_size = min(max_batch_size, max(max_batch_size_cap, 1))
         if max_batch_size <= 0:
             return []
 
@@ -113,7 +117,7 @@ class SendExecutionPolicy:
 
     def resolve_delay_seconds(self, rng: random.Random) -> int:
         base_delay = rng.choice(self._config.send_behavior.comment_delay_choices)
-        jitter = rng.choice((-1, 0, 1, 2))
+        jitter = rng.choice((-2, -1, 0, 1, 2, 3, 5))
         return max(base_delay + jitter, 2)
 
     @staticmethod
